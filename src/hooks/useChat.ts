@@ -1,9 +1,6 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { API_BASE_URL } from '@/lib/constants';
-import { apiFetch } from '@/lib/api';
-import { useSSE, SSEEvent } from './useSSE';
 
 export interface ChatMessage {
   id: string;
@@ -32,128 +29,134 @@ export interface UseChatReturn {
   loadHistory: () => Promise<void>;
 }
 
+// Mock responses based on keywords
+const MOCK_RESPONSES: { pattern: RegExp; response: string; suggestions: string[] }[] = [
+  {
+    pattern: /مبيعات|sales|revenue|إيرادات/i,
+    response: `Here's your sales summary for the last 7 days:
+
+| Day | Orders | Revenue (SAR) |
+|-----|--------|---------------|
+| Sunday | 45 | 12,350 |
+| Monday | 52 | 14,200 |
+| Tuesday | 38 | 10,800 |
+| Wednesday | 61 | 16,750 |
+| Thursday | 55 | 15,300 |
+| Friday | 72 | 19,800 |
+| Saturday | 68 | 18,500 |
+
+**Total Revenue:** 107,700 SAR
+**Average Daily Orders:** 55.9
+**Best Day:** Friday with 72 orders`,
+    suggestions: ['Compare with last month', 'Show top products', 'Revenue breakdown by branch'],
+  },
+  {
+    pattern: /عملاء|customers|customer/i,
+    response: `**Customer Overview:**
+
+- **Total Customers:** 2,847
+- **New Customers (This Month):** 234
+- **Returning Customers:** 1,892 (66.4%)
+- **VIP Customers:** 156
+
+**Customer Segments:**
+| Segment | Count | Avg Spend (SAR) |
+|---------|-------|-----------------|
+| Super Fan | 156 | 850 |
+| Loyal | 423 | 520 |
+| Regular | 1,313 | 280 |
+| At Risk | 612 | 150 |
+| New | 343 | 95 |`,
+    suggestions: ['Show at-risk customers', 'Customer retention rate', 'Top spending customers'],
+  },
+  {
+    pattern: /منتجات|products|product|top/i,
+    response: `**Top 5 Products (Last 30 Days):**
+
+| # | Product | Units Sold | Revenue (SAR) |
+|---|---------|------------|---------------|
+| 1 | Caramel Macchiato | 1,245 | 24,900 |
+| 2 | Iced Latte | 1,102 | 19,836 |
+| 3 | Cappuccino | 987 | 14,805 |
+| 4 | Chocolate Croissant | 856 | 8,560 |
+| 5 | Avocado Toast | 734 | 14,680 |
+
+**Total Products Sold:** 8,924 units
+**Average Order Value:** 45.2 SAR`,
+    suggestions: ['Show worst performing products', 'Product trends over time', 'Category breakdown'],
+  },
+  {
+    pattern: /فروع|branch|branches|فرع/i,
+    response: `**Branch Performance Summary:**
+
+| Branch | Orders | Revenue (SAR) | Avg Rating |
+|--------|--------|---------------|------------|
+| Riyadh Main | 1,234 | 45,600 | 4.8 |
+| Jeddah Mall | 987 | 38,200 | 4.6 |
+| Dammam Center | 756 | 28,900 | 4.7 |
+| Khobar Plaza | 543 | 21,300 | 4.5 |
+
+**Best Performing:** Riyadh Main
+**Highest Growth:** Dammam Center (+12% MoM)`,
+    suggestions: ['Compare branches in detail', 'Branch customer satisfaction', 'Revenue by branch over time'],
+  },
+  {
+    pattern: /ولاء|loyalty|points|نقاط/i,
+    response: `**Loyalty Program Overview:**
+
+- **Active Members:** 1,892
+- **Points Issued (This Month):** 45,600
+- **Points Redeemed:** 23,400 (51.3%)
+- **Redemption Rate:** 51.3%
+
+**Tier Distribution:**
+| Tier | Members | Avg Points |
+|------|---------|------------|
+| Platinum | 89 | 12,500 |
+| Gold | 234 | 6,800 |
+| Silver | 567 | 3,200 |
+| Bronze | 1,002 | 950 |`,
+    suggestions: ['Points expiring soon', 'Loyalty program ROI', 'Inactive members'],
+  },
+];
+
+const DEFAULT_RESPONSE = {
+  response: `I can help you with insights about your business! Try asking about:
+
+- **Sales & Revenue** — daily performance, trends, comparisons
+- **Customers** — segments, retention, top spenders
+- **Products** — best sellers, categories, trends
+- **Branches** — performance comparison, ratings
+- **Loyalty Program** — points, tiers, redemption rates
+
+What would you like to know?`,
+  suggestions: ['Show today\'s sales', 'Customer overview', 'Top products this month', 'Branch comparison'],
+};
+
+function getMockResponse(query: string): { response: string; suggestions: string[] } {
+  for (const mock of MOCK_RESPONSES) {
+    if (mock.pattern.test(query)) {
+      return { response: mock.response, suggestions: mock.suggestions };
+    }
+  }
+  return DEFAULT_RESPONSE;
+}
+
 export function useChat(): UseChatReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationId] = useState<string | null>('mock_conv_1');
   const [isStreaming, setIsStreaming] = useState(false);
   const [activeTools, setActiveTools] = useState<ToolProgress[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-
-  // Accumulate tokens into the current AI message
-  const fullResponseRef = useRef('');
-  const streamingMsgIdRef = useRef<string | null>(null);
-
-  const handleEvent = useCallback((event: SSEEvent) => {
-    switch (event.type) {
-      case 'token': {
-        fullResponseRef.current += event.content as string;
-        const msgId = streamingMsgIdRef.current;
-        if (msgId) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === msgId ? { ...m, content: fullResponseRef.current } : m,
-            ),
-          );
-        }
-        break;
-      }
-
-      case 'tool_start':
-        setActiveTools((prev) => [
-          ...prev,
-          {
-            tool: event.tool as string,
-            icon: (event.icon as string) || '🔧',
-            title: (event.title as string) || (event.tool as string),
-            description: (event.description as string) || '',
-            status: 'active',
-          },
-        ]);
-        break;
-
-      case 'tool_end':
-        setActiveTools((prev) =>
-          prev.map((t) =>
-            t.tool === event.tool ? { ...t, status: 'completed' } : t,
-          ),
-        );
-        break;
-
-      case 'generating_start':
-        setActiveTools((prev) => [
-          ...prev,
-          {
-            tool: 'generating',
-            icon: (event.icon as string) || '✍️',
-            title: (event.title as string) || 'Generating response',
-            description: (event.description as string) || '',
-            status: 'active',
-          },
-        ]);
-        break;
-
-      case 'done':
-        setConversationId((event.conversation_id as string) || null);
-        setActiveTools([]);
-        setIsStreaming(false);
-        if (event.suggestions && Array.isArray(event.suggestions)) {
-          setSuggestions(event.suggestions as string[]);
-        }
-        // Finalize message
-        if (streamingMsgIdRef.current) {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === streamingMsgIdRef.current
-                ? { ...m, content: fullResponseRef.current }
-                : m,
-            ),
-          );
-        }
-        streamingMsgIdRef.current = null;
-        break;
-
-      case 'error':
-        setIsStreaming(false);
-        setActiveTools([]);
-        streamingMsgIdRef.current = null;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err_${Date.now()}`,
-            role: 'ai',
-            content: (event.content as string) || 'An error occurred.',
-            timestamp: new Date().toISOString(),
-          },
-        ]);
-        break;
-    }
-  }, []);
-
-  const handleDone = useCallback(() => {
-    setIsStreaming(false);
-    setActiveTools([]);
-  }, []);
-
-  const handleError = useCallback((err: Error) => {
-    setIsStreaming(false);
-    setActiveTools([]);
-    console.error('SSE error:', err);
-  }, []);
-
-  const { start, stop } = useSSE({
-    onEvent: handleEvent,
-    onDone: handleDone,
-    onError: handleError,
-  });
+  const abortRef = useRef(false);
 
   const sendMessage = useCallback(
-    (query: string, language?: string) => {
-      if (!query.trim()) return;
+    (query: string) => {
+      if (!query.trim() || isStreaming) return;
 
-      // Clear previous suggestions
       setSuggestions([]);
+      abortRef.current = false;
 
-      // Add user message
       const userMsg: ChatMessage = {
         id: `user_${Date.now()}`,
         role: 'user',
@@ -161,7 +164,6 @@ export function useChat(): UseChatReturn {
         timestamp: new Date().toISOString(),
       };
 
-      // Create placeholder AI message
       const aiMsgId = `ai_${Date.now()}`;
       const aiMsg: ChatMessage = {
         id: aiMsgId,
@@ -170,75 +172,69 @@ export function useChat(): UseChatReturn {
         timestamp: new Date().toISOString(),
       };
 
-      streamingMsgIdRef.current = aiMsgId;
-      fullResponseRef.current = '';
-
       setMessages((prev) => [...prev, userMsg, aiMsg]);
       setIsStreaming(true);
-      setActiveTools([]);
 
-      start(`${API_BASE_URL}/api/chat/agent/stream`, {
-        user_query: query,
-        conversation_id: conversationId,
-        language: language || localStorage.getItem('preferred_language') || 'ar',
-      });
+      const { response, suggestions: mockSuggestions } = getMockResponse(query);
+
+      // Simulate tool usage then streaming
+      setActiveTools([
+        { tool: 'query_db', icon: '🔍', title: 'Querying database', description: 'Analyzing your data...', status: 'active' },
+      ]);
+
+      setTimeout(() => {
+        if (abortRef.current) return;
+        setActiveTools((prev) =>
+          prev.map((t) => (t.tool === 'query_db' ? { ...t, status: 'completed' as const } : t)),
+        );
+        setActiveTools((prev) => [
+          ...prev,
+          { tool: 'generating', icon: '✍️', title: 'Generating response', description: '', status: 'active' },
+        ]);
+
+        // Stream the response character by character (in chunks)
+        let idx = 0;
+        const chunkSize = 5;
+        const interval = setInterval(() => {
+          if (abortRef.current) {
+            clearInterval(interval);
+            setIsStreaming(false);
+            setActiveTools([]);
+            return;
+          }
+
+          idx += chunkSize;
+          const partial = response.slice(0, idx);
+
+          setMessages((prev) =>
+            prev.map((m) => (m.id === aiMsgId ? { ...m, content: partial } : m)),
+          );
+
+          if (idx >= response.length) {
+            clearInterval(interval);
+            setIsStreaming(false);
+            setActiveTools([]);
+            setSuggestions(mockSuggestions);
+          }
+        }, 15);
+      }, 1200);
     },
-    [conversationId, start],
+    [isStreaming],
   );
 
   const stopStreaming = useCallback(() => {
-    stop();
+    abortRef.current = true;
     setIsStreaming(false);
     setActiveTools([]);
-  }, [stop]);
+  }, []);
 
   const clearChat = useCallback(async () => {
-    try {
-      await apiFetch('/api/chat/history', { method: 'DELETE' });
-    } catch (e) {
-      console.error('Failed to clear history:', e);
-    }
     setMessages([]);
-    setConversationId(null);
     setSuggestions([]);
   }, []);
 
   const loadHistory = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/chat/history?limit=20');
-      if (!res.ok) return;
-      const data = await res.json();
-
-      if (data.messages && data.messages.length > 0) {
-        const loaded: ChatMessage[] = [];
-        for (const msg of data.messages as Array<{
-          user_query: string;
-          ai_response: string;
-          timestamp: string;
-        }>) {
-          if (msg.user_query !== '[First chat of the day - Proactive Insights]') {
-            loaded.push({
-              id: `hist_user_${loaded.length}`,
-              role: 'user',
-              content: msg.user_query,
-              timestamp: msg.timestamp,
-            });
-          }
-          loaded.push({
-            id: `hist_ai_${loaded.length}`,
-            role: 'ai',
-            content: msg.ai_response,
-            timestamp: msg.timestamp,
-          });
-        }
-        setMessages(loaded);
-        if (data.conversation_id) {
-          setConversationId(data.conversation_id);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load history:', e);
-    }
+    // No history to load in mock mode
   }, []);
 
   return {

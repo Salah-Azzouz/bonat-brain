@@ -9,7 +9,6 @@ export default function LoginPage() {
   const router = useRouter();
   const { token, login, loading } = useAuth();
 
-  // Redirect if already logged in
   useEffect(() => {
     if (!loading && token) {
       router.replace('/chat');
@@ -22,7 +21,7 @@ export default function LoginPage() {
   };
 
   if (loading) return null;
-  if (token) return null; // will redirect
+  if (token) return null;
 
   return (
     <div className="auth-body">

@@ -1,13 +1,3 @@
-// API base URL — uses relative paths so the Next.js proxy or same-origin backend is hit
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
-
-// Default merchant list (fallback when API is unavailable)
-export const MERCHANT_LIST = [
-  'merchant_1',
-  'merchant_2',
-  'merchant_3',
-];
-
 // LocalStorage keys
 export const LS_TOKEN_KEY = 'access_token';
 export const LS_USER_KEY = 'user';

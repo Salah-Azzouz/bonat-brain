@@ -1,72 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/lib/api';
-import { useAuth } from './useAuth';
+import { useCallback, useState } from 'react';
 
-export interface MerchantConfig {
-  merchants: string[];
-  current: string;
-  default: string;
-}
+const MOCK_MERCHANTS = ['merchant_1', 'merchant_2', 'merchant_3'];
 
 export function useMerchant() {
-  const { setToken, setUser } = useAuth();
-  const [merchants, setMerchants] = useState<string[]>([]);
-  const [currentMerchant, setCurrentMerchant] = useState<string>('');
-  const [defaultMerchant, setDefaultMerchant] = useState<string>('');
+  const [merchants] = useState<string[]>(MOCK_MERCHANTS);
+  const [currentMerchant, setCurrentMerchant] = useState<string>('merchant_1');
   const [loading, setLoading] = useState(false);
-
-  // Fetch available merchants on mount
-  useEffect(() => {
-    apiFetch('/api/merchants')
-      .then((res) => {
-        if (res.ok) return res.json();
-        throw new Error('Failed to load merchants');
-      })
-      .then((data: MerchantConfig) => {
-        setMerchants(data.merchants);
-        setCurrentMerchant(data.current);
-        setDefaultMerchant(data.default);
-      })
-      .catch((err) => {
-        console.error('Error fetching merchants:', err);
-      });
-  }, []);
 
   const switchMerchant = useCallback(
     async (merchantId: string) => {
       if (merchantId === currentMerchant) return;
-
       setLoading(true);
-      try {
-        const res = await apiFetch('/api/switch-merchant', {
-          method: 'POST',
-          body: JSON.stringify({ merchant_id: merchantId }),
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(
-            (body as Record<string, string>).detail || 'Failed to switch merchant',
-          );
-        }
-
-        const data = await res.json();
-        setToken(data.access_token);
-        setUser(data.user);
-        setCurrentMerchant(merchantId);
-      } finally {
-        setLoading(false);
-      }
+      await new Promise((r) => setTimeout(r, 300));
+      setCurrentMerchant(merchantId);
+      setLoading(false);
     },
-    [currentMerchant, setToken, setUser],
+    [currentMerchant],
   );
 
   return {
     merchants,
     currentMerchant,
-    defaultMerchant,
+    defaultMerchant: 'merchant_1',
     loading,
     switchMerchant,
   };
