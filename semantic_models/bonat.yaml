@@ -1,0 +1,1761 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Bonat Semantic Model — Single Source of Truth
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# This file defines ALL metadata about the merchant analytics database:
+#   - Table schemas (columns, types, descriptions)
+#   - Column corrections (common LLM hallucinations → correct names)
+#   - Intent category mappings (for structured tool routing)
+#   - Semantic routing examples (for embedding-based table selection)
+#   - Few-shot SQL examples (for legacy fallback)
+#   - Business terminology and segment definitions
+#
+# To onboard a new client: copy this file, adjust tables/columns, done.
+# No Python code changes needed.
+
+model:
+  name: bonat
+  description: Merchant loyalty analytics platform
+  timezone: Asia/Riyadh
+  currency: SAR
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tables
+# ═══════════════════════════════════════════════════════════════════════════════
+
+tables:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  DailyPerformanceSummary:
+    description: >
+      Daily visits, revenue, and customer metrics per branch.
+      This is the primary table for any time-series question about visits, revenue, or orders
+      on a daily basis. Use it for "last 7 days", "yesterday", "this week", "daily trend", etc.
+    intent_category: daily_metrics
+    time_column: performance_date
+    grain: one row per branch per day
+    default_filters: []
+    notes: >
+      Each row = one branch + one day. Multiple branches exist per day — use SUM() to aggregate across branches.
+      total_orders = online coupon transactions (NOT pickup orders, NOT in-store visits).
+      online_revenue and pickup_revenue are sub-components of total_revenue.
+      visit_types is a JSON string (e.g., '{"PhoneNumber": 2}') — not useful for aggregation.
+      The table also has year, month, day_of_week integers for convenience, but time filtering uses performance_date.
+
+    column_groups:
+      visits: [daily_visits, unique_customers]
+      revenue: [total_revenue, online_revenue, pickup_revenue]
+      orders: [total_orders, online_transactions, pickup_orders]
+      loyalty: [points_awarded]
+      temporal: [performance_date, year, month, day_of_week]
+      identity: [idMerchant, idBranch, branch_name, merchant_name]
+
+    columns:
+      performance_date:
+        type: date
+        description: "Date of the data (YYYY-MM-DD). Primary key for time filtering."
+      idBranch:
+        type: integer
+        description: "Branch ID. -1 = online channel, >0 = physical in-store branch."
+      branch_name:
+        type: string
+        description: "Human-readable branch name (e.g., 'Nahda', 'Kharj-Hada'). 'Online' for online channel."
+      merchant_name:
+        type: string
+        description: "Merchant business name (same across all rows for a given merchant)."
+      daily_visits:
+        type: integer
+        description: "Number of customer visits (check-ins) that day at this branch."
+      unique_customers:
+        type: integer
+        description: "Count of unique (distinct) customers who visited that day at this branch."
+      total_revenue:
+        type: decimal
+        description: "Total revenue in SAR for that day and branch. Sum of online_revenue + pickup_revenue."
+      total_orders:
+        type: integer
+        description: "Online coupon transaction count (NOT pickup orders, NOT in-store POS transactions)."
+      points_awarded:
+        type: integer
+        description: "Total loyalty points awarded to customers that day at this branch."
+      online_revenue:
+        type: decimal
+        description: "Revenue from online coupon transactions in SAR."
+      online_transactions:
+        type: integer
+        description: "Count of online coupon transactions. Same concept as total_orders."
+      pickup_revenue:
+        type: decimal
+        description: "Revenue from pickup orders in SAR."
+      pickup_orders:
+        type: integer
+        description: "Count of pickup orders."
+      year:
+        type: integer
+        description: "Year extracted from performance_date (e.g., 2026). For convenience."
+      month:
+        type: integer
+        description: "Month extracted from performance_date (1-12). For convenience."
+      day_of_week:
+        type: integer
+        description: "Day of week (0=Monday, 6=Sunday). For day-of-week analysis."
+
+    column_corrections:
+      date: performance_date
+      total_visits: daily_visits
+      visit_count: daily_visits
+      visits: daily_visits
+      customer_count: unique_customers
+      total_customers: unique_customers
+      online_transactions: total_orders
+      daily_revenue: total_revenue
+      online_orders: total_orders
+      order_count: total_orders
+
+    routing_examples:
+      - "show me visits for the last 7 days"
+      - "daily revenue this week"
+      - "how many customers visited yesterday"
+      - "visits trend over time"
+      - "what was my revenue last week"
+      - "how many visits did I get today"
+      - "daily visits for the past 2 weeks"
+      - "revenue yesterday"
+      - "unique customers this month day by day"
+      - "عدد الزيارات اليوم"
+      - "إيرادات آخر أسبوع"
+      - "كم الزيارات هذا الأسبوع"
+      - "ابي أشوف الإيرادات اليومية"
+      - "عطني مبيعات آخر شهر"
+      - "وش الدخل حق البارحة"
+      - "كم عدد الزيارات أمس"
+      - "ابي أشوف revenue حق آخر أسبوع"
+
+    few_shot_examples: |
+      Q: "Total visits last week"
+      SQL: SELECT SUM(`daily_visits`) as total_visits FROM `DailyPerformanceSummary` WHERE `idMerchant` = {merchant_id} AND `performance_date` >= DATE_SUB('{current_date}', INTERVAL 7 DAY)
+
+      Q: "Daily revenue this month"
+      SQL: SELECT `performance_date`, SUM(`total_revenue`) as daily_revenue FROM `DailyPerformanceSummary` WHERE `idMerchant` = {merchant_id} AND `performance_date` >= '{current_date}' - INTERVAL (DAY('{current_date}') - 1) DAY GROUP BY `performance_date` ORDER BY `performance_date`
+
+      Q: "Total online transactions"
+      SQL: SELECT SUM(`total_orders`) as total_online_transactions FROM `DailyPerformanceSummary` WHERE `idMerchant` = {merchant_id}
+
+  # ──────────────────────────────────────────────────────────────────────────
+  MonthlyPerformanceSummary:
+    description: >
+      Monthly aggregated visits, revenue, and order metrics per branch.
+      Use for "monthly trend", "visits per month", "year over year", or any question
+      specifically asking about monthly granularity. Has year/month as integer columns, NOT a date column.
+    intent_category: monthly_metrics
+    time_column: year_month   # Special: year + month integers
+    grain: one row per branch per month
+    default_filters: []
+    notes: >
+      Each row = one branch + one month. Multiple branches exist per month — use SUM() to aggregate across branches.
+      Time filter: use year/month integers in WHERE clause, NOT a date column.
+      Example: WHERE year = 2025 AND month = 6 for June 2025.
+      Does NOT have a performance_date column — use DailyPerformanceSummary for date-based queries.
+
+    column_groups:
+      visits: [monthly_visits, monthly_customers]
+      revenue: [total_monthly_revenue, monthly_online_revenue, monthly_pickup_revenue]
+      orders: [total_monthly_orders, monthly_transactions, monthly_pickup_orders]
+      loyalty: [monthly_points]
+      temporal: [year, month]
+      identity: [idMerchant, idBranch, branch_name, merchant_name]
+
+    columns:
+      year:
+        type: integer
+        description: "Year as integer (e.g., 2025, 2026). Use in WHERE clause for year filtering."
+      month:
+        type: integer
+        description: "Month as integer (1=January, 12=December). Use in WHERE clause for month filtering."
+      idBranch:
+        type: integer
+        description: "Branch ID. -1 = online channel, >0 = physical in-store branch."
+      branch_name:
+        type: string
+        description: "Human-readable branch name."
+      merchant_name:
+        type: string
+        description: "Merchant business name."
+      monthly_visits:
+        type: integer
+        description: "Total customer visits for the month at this branch."
+      monthly_customers:
+        type: integer
+        description: "Unique (distinct) customers who visited that month at this branch."
+      total_monthly_revenue:
+        type: decimal
+        description: "Total revenue in SAR for the month. Sum of online + pickup revenue."
+      total_monthly_orders:
+        type: integer
+        description: "Total orders for the month (online coupon transactions)."
+      monthly_points:
+        type: integer
+        description: "Loyalty points awarded during the month at this branch."
+      monthly_online_revenue:
+        type: decimal
+        description: "Online coupon transaction revenue for the month in SAR."
+      monthly_pickup_revenue:
+        type: decimal
+        description: "Pickup order revenue for the month in SAR."
+      monthly_transactions:
+        type: integer
+        description: "Online transaction count for the month."
+      monthly_pickup_orders:
+        type: integer
+        description: "Pickup order count for the month."
+
+    column_corrections:
+      total_revenue: total_monthly_revenue
+      revenue: total_monthly_revenue
+      monthly_revenue_sar: total_monthly_revenue
+      total_revenue_sar: total_monthly_revenue
+      revenue_sar: total_monthly_revenue
+      monthly_revenue: total_monthly_revenue
+      total_orders: total_monthly_orders
+      monthly_order_count: total_monthly_orders
+      visits: monthly_visits
+      total_visits: monthly_visits
+
+    routing_examples:
+      - "monthly revenue trend"
+      - "visits per month in 2024"
+      - "year over year comparison"
+      - "how did my revenue change month over month"
+      - "show me monthly performance"
+      - "compare this month to last month"
+      - "monthly visit trend for 2024"
+      - "إيرادات شهرية"
+      - "مقارنة الأشهر"
+      - "ابي أشوف الترند الشهري"
+      - "كم الإيرادات كل شهر"
+      - "الزيارات حسب الشهر"
+      - "مقارنة شهر بشهر"
+
+    few_shot_examples: |
+      Q: "Monthly revenue for 2024"
+      SQL: SELECT `year`, `month`, SUM(`total_monthly_revenue`) as revenue FROM `MonthlyPerformanceSummary` WHERE `idMerchant` = {merchant_id} AND `year` = 2024 GROUP BY `year`, `month` ORDER BY `month`
+
+      Q: "Monthly visit trends"
+      SQL: SELECT `year`, `month`, SUM(`monthly_visits`) as visits FROM `MonthlyPerformanceSummary` WHERE `idMerchant` = {merchant_id} GROUP BY `year`, `month` ORDER BY `year` DESC, `month` DESC
+
+  # ──────────────────────────────────────────────────────────────────────────
+  CustomerSummary:
+    description: >
+      Per-customer lifetime data. Each row is one customer with their full history:
+      registration, visits, revenue, segment, points. Very large table (150K+ rows) — queries
+      WILL timeout without proper optimization (always use COUNT/SUM aggregation, never select individual rows).
+    intent_category: customer_details
+    time_column: registration_date
+    grain: one row per customer
+    default_filters: []
+    notes: >
+      One row per customer. VERY LARGE TABLE (~150K rows). Queries timeout without aggregation.
+      To count registrations (e.g., "how many customers registered last week"),
+      use COUNT(*) with column="*" and aggregation="count", and set time_range.
+      There is NO "new_registrations" column — use COUNT(*) with time_range on registration_date.
+      For segment counts (e.g., "how many Super Fans"), prefer LoyaltyProgramSummary — it is faster and pre-aggregated.
+      TWO date columns exist: registration_date (when customer signed up) and last_visit_date (most recent visit).
+      "Visited" queries (e.g., "loyal customers who visited last month") must filter on last_visit_date, NOT registration_date.
+      customer_segment may be NULL for some customers — use loyalty_segment_id for reliable segment filtering.
+
+    column_groups:
+      registration: [registration_date, first_visit_date, customer_lifetime_days]
+      activity: [last_visit_date, total_visits, days_since_last_visit, avg_days_between_visits]
+      revenue: [total_revenue, total_orders, avg_order_value, transaction_count, transaction_revenue]
+      loyalty: [loyalty_score, loyalty_points_balance, loyalty_points_redeemed, total_points_earned]
+      segment: [loyalty_segment_id, customer_segment]
+      demographics: [customer_name, customer_email, customer_phone, customer_gender, customer_birthday, customer_city_name]
+      pickup: [pickup_count, pickup_revenue]
+      identity: [idMerchant, customer_id]
+
+    columns:
+      customer_id:
+        type: integer
+        description: "Unique customer identifier (primary key)."
+      customer_name:
+        type: string
+        description: "Customer's full name."
+      customer_email:
+        type: string
+        description: "Customer email address."
+      customer_phone:
+        type: string
+        description: "Customer phone number."
+      customer_gender:
+        type: string
+        description: "Customer gender."
+      customer_birthday:
+        type: datetime
+        description: "Customer birthday (DATETIME format)."
+      customer_city_name:
+        type: string
+        description: "City where the customer is located."
+      registration_date:
+        type: datetime
+        description: "Date and time the customer signed up / registered (DATETIME). Default time_range column."
+      first_visit_date:
+        type: datetime
+        description: "Date of the customer's first visit (DATETIME)."
+      last_visit_date:
+        type: datetime
+        description: "Date of the customer's most recent visit (DATETIME). Use for 'visited' / 'active' queries."
+      total_visits:
+        type: decimal
+        description: "Total lifetime visit count for this customer."
+      total_revenue:
+        type: decimal
+        description: "Total lifetime revenue in SAR from this customer."
+      total_orders:
+        type: decimal
+        description: "Total lifetime online order count."
+      total_points_earned:
+        type: decimal
+        description: "Total loyalty points earned by this customer over their lifetime."
+      transaction_count:
+        type: decimal
+        description: "Online transaction count (similar to total_orders)."
+      transaction_revenue:
+        type: decimal
+        description: "Revenue from online transactions in SAR."
+      pickup_count:
+        type: decimal
+        description: "Number of pickup orders placed by this customer."
+      pickup_revenue:
+        type: decimal
+        description: "Revenue from pickup orders in SAR."
+      loyalty_score:
+        type: integer
+        description: "Current loyalty score (integer)."
+      loyalty_points_balance:
+        type: integer
+        description: "Current unspent loyalty points balance."
+      loyalty_points_redeemed:
+        type: integer
+        description: "Total loyalty points redeemed by this customer."
+      loyalty_segment_id:
+        type: string
+        description: "Loyalty segment ID: 'superFan', 'loyalCustomer', 'regularCustomer', 'newCustomer', 'lostCustomer', 'potentialCustomer'."
+      customer_segment:
+        type: string
+        description: "Segment display name (may be NULL). Values: 'Super Fan', 'Loyal Customer', 'Regular Customer', 'New Customer', 'Lost Customer', 'Potential Customer'."
+      avg_order_value:
+        type: decimal
+        description: "Average order value in SAR (total_revenue / total_orders)."
+      days_since_last_visit:
+        type: integer
+        description: "Number of days since the customer's last visit. Higher = less active."
+      customer_lifetime_days:
+        type: decimal
+        description: "Days between registration and last visit (customer tenure)."
+      avg_days_between_visits:
+        type: string
+        description: "Average days between consecutive visits (stored as text)."
+
+    column_corrections:
+      date: registration_date
+      created_at: registration_date
+      join_date: registration_date
+      signup_date: registration_date
+      registered_date: registration_date
+      segment: customer_segment
+      segment_name: customer_segment
+      loyalty_segment: loyalty_segment_id
+
+    routing_examples:
+      - "customers who registered this month"
+      - "top customers by revenue"
+      - "new customers who joined last week"
+      - "list of loyal customers who visited recently"
+      - "customer details and demographics"
+      - "average order value per customer"
+      - "how many customers registered last week"
+      - "العملاء المسجلين هذا الشهر"
+      - "أفضل العملاء"
+      - "كم عميل سجل هذا الشهر"
+      - "العملاء اللي انضموا آخر أسبوع"
+      - "عطني بيانات العملاء"
+      - "كم واحد زار آخر شهر"
+      - "العملاء اللي زاروا البارحة"
+
+    few_shot_examples: |
+      Q: "How many customers registered this month?"
+      SQL: SELECT COUNT(*) as new_customers FROM `CustomerSummary` WHERE `idMerchant` = {merchant_id} AND `registration_date` >= DATE_FORMAT('{current_date}', '%Y-%m-01')
+
+      Q: "How many new customers joined last week?"
+      SQL: SELECT COUNT(*) as new_customers FROM `CustomerSummary` WHERE `idMerchant` = {merchant_id} AND `registration_date` >= DATE_SUB('{current_date}', INTERVAL (WEEKDAY('{current_date}') + 7) DAY) AND `registration_date` < DATE_SUB('{current_date}', INTERVAL WEEKDAY('{current_date}') DAY)
+
+      Q: "Show me top customers by revenue"
+      SQL: SELECT `customer_name`, `total_revenue`, `total_visits`, `customer_segment` FROM `CustomerSummary` WHERE `idMerchant` = {merchant_id} ORDER BY `total_revenue` DESC LIMIT 10
+
+  # ──────────────────────────────────────────────────────────────────────────
+  LoyaltyProgramSummary:
+    description: >
+      Pre-aggregated loyalty segment statistics. Each row = one segment with its member counts,
+      points, rewards, gifts, coupons, and engagement rates. LIFETIME data only — no date column.
+      This is the fastest table for segment questions ("how many Super Fans", "segment breakdown",
+      "new vs lost customers"). Always prefer this over CustomerSummary for segment counts.
+    intent_category: loyalty_segments
+    time_column: null
+    grain: one row per segment (7 segments + 1 ALL summary row)
+    default_filters: []
+
+    column_groups:
+      members: [total_members, active_members, blocked_members]
+      points: [total_points_balance, total_points_redeemed, avg_points_per_member, points_redemption_rate]
+      rewards: [total_rewards_issued, total_rewards_redeemed, rewards_redemption_rate]
+      gifts: [total_gifts_issued, total_gifts_redeemed, gifts_redemption_rate]
+      coupons: [total_coupons_issued, total_coupons_redeemed, coupons_redemption_rate]
+      engagement: [program_engagement_rate, avg_loyalty_score, total_loyalty_visits]
+      identity: [idMerchant, loyalty_segment_id, loyalty_segment_name]
+
+    notes: |-
+      CRITICAL SEGMENT FILTERING RULES (MUST FOLLOW):
+
+      1. BREAKDOWN / COMPARISON queries ("breakdown", "vs", "and", "compare segments",
+         "new vs lost", "all segments", "segment distribution", "new and lost customers"):
+         → ALWAYS use: WHERE loyalty_segment_id != 'ALL'
+         → ALWAYS add: GROUP BY loyalty_segment_id
+         → This returns ALL 7 segments. Do NOT cherry-pick specific segment IDs.
+         → The user can read the segments they care about from the full list.
+         ⚠️ NEVER use IN ('newCustomer', 'lostCustomer') for comparison — use != 'ALL'.
+
+      2. SINGLE segment query ("how many Super Fans", "lost customer count"):
+         → Use: WHERE loyalty_segment_id = '<exact_id>'
+         → Exact IDs: 'superFan', 'loyalCustomer', 'regularCustomer', 'newCustomer', 'lostCustomer', 'potentialCustomer'
+
+      3. MERCHANT TOTALS ("total members", "overall loyalty stats"):
+         → Use: WHERE loyalty_segment_id = 'ALL'
+
+      LIFETIME only — no date filtering possible. If user asks for time-filtered segment data,
+      this table cannot answer it — use CustomerSummary with last_visit_date instead.
+
+      SEGMENT DEFINITIONS:
+      - Super Fan (superFan): Visited more than the average, more than once every week
+      - Loyal (loyalCustomer): Visited regularly, at least once over the past 2 weeks
+      - Regular (regularCustomer): Visit regularly at least once a month
+      - New (newCustomer): Joined the loyalty program this month
+      - Lost (lostCustomer): Did not visit for 1 month and have more than 5 visits in total
+      - Potential (potentialCustomer): Did not visit for 1 month and have 5 or less visits in total
+      - Birthday Present! (birthday): Have their birthday this month
+      - ALL: Summary row with totals across all segments
+
+    columns:
+      loyalty_segment_id:
+        type: string
+        description: "Segment ID. Exact values: 'superFan', 'loyalCustomer', 'regularCustomer', 'newCustomer', 'lostCustomer', 'potentialCustomer', 'birthday', 'ALL'."
+      loyalty_segment_name:
+        type: string
+        description: "Human-readable segment name: 'Super Fan', 'Loyal Customer', 'Regular Customer', 'New Customer', 'Lost Customer', 'Potential Customer', 'Birthday Present!', 'All Segments'."
+      total_members:
+        type: integer
+        description: "Total number of members in this segment (includes blocked)."
+      active_members:
+        type: integer
+        description: "Active (non-blocked) members in this segment. This is the primary count metric."
+      blocked_members:
+        type: integer
+        description: "Number of blocked members in this segment."
+      avg_loyalty_score:
+        type: decimal
+        description: "Average loyalty score for members in this segment (may be NULL)."
+      total_points_balance:
+        type: integer
+        description: "Total unspent loyalty points held by members in this segment."
+      total_points_redeemed:
+        type: integer
+        description: "Total loyalty points redeemed by members in this segment."
+      total_loyalty_visits:
+        type: integer
+        description: "Total visits by members in this segment (NOT redemption count)."
+      total_rewards_issued:
+        type: integer
+        description: "Point-based rewards issued to members in this segment."
+      total_rewards_redeemed:
+        type: integer
+        description: "Point-based rewards redeemed by members in this segment."
+      total_gifts_issued:
+        type: integer
+        description: "Free gift items issued to members in this segment (birthday gifts, re-engagement gifts)."
+      total_gifts_redeemed:
+        type: integer
+        description: "Free gift items redeemed by members in this segment."
+      total_coupons_issued:
+        type: decimal
+        description: "Discount coupons (purchased from Store) issued to members in this segment."
+      total_coupons_redeemed:
+        type: decimal
+        description: "Discount coupons redeemed by members in this segment."
+      program_engagement_rate:
+        type: decimal
+        description: "Percentage of members actively engaged with the loyalty program (%)."
+      rewards_redemption_rate:
+        type: decimal
+        description: "Percentage of issued rewards that were redeemed (%)."
+      gifts_redemption_rate:
+        type: decimal
+        description: "Percentage of issued gifts that were redeemed (%)."
+      coupons_redemption_rate:
+        type: decimal
+        description: "Percentage of issued coupons that were redeemed (%)."
+      points_redemption_rate:
+        type: decimal
+        description: "Percentage of earned points that were redeemed (%)."
+      avg_points_per_member:
+        type: decimal
+        description: "Average loyalty points balance per member in this segment."
+
+    column_corrections:
+      segment_name: loyalty_segment_name
+      segment: loyalty_segment_name
+      loyalty_segment: loyalty_segment_name
+      total_superfans: active_members
+      superfan_count: active_members
+      member_count: active_members
+      members: active_members
+      customer_count: active_members
+      total_members_count: total_members
+      engagement_rate: program_engagement_rate
+
+    routing_examples:
+      - "how many lost customers do I have"
+      - "how many new customers"
+      - "how many Super Fans"
+      - "segment breakdown"
+      - "new vs lost customers"
+      - "loyalty score by segment"
+      - "customer segment distribution"
+      - "points redemption rate"
+      - "compare segments"
+      - "كم عدد العملاء الجدد"
+      - "كم عدد العملاء المفقودين"
+      - "وش الشرائح عندي"
+      - "عطني توزيع الفئات"
+      - "كم سوبر فان عندي"
+      - "كم عميل وفي"
+      - "مقارنة الشرائح"
+      - "العملاء حسب الشريحة"
+
+    few_shot_examples: |
+      Q: "How many customers in each segment?"
+      SQL: SELECT `loyalty_segment_name`, `active_members` FROM `LoyaltyProgramSummary` WHERE `idMerchant` = {merchant_id} AND `loyalty_segment_id` != 'ALL'
+
+      Q: "Show me new vs lost customers"
+      SQL: SELECT `loyalty_segment_name`, `active_members` FROM `LoyaltyProgramSummary` WHERE `idMerchant` = {merchant_id} AND `loyalty_segment_id` != 'ALL'
+
+      Q: "How many Super Fan customers?"
+      SQL: SELECT `active_members` FROM `LoyaltyProgramSummary` WHERE `idMerchant` = {merchant_id} AND `loyalty_segment_id` = 'superFan'
+
+      Q: "How many lost customers do I have?"
+      SQL: SELECT `active_members` FROM `LoyaltyProgramSummary` WHERE `idMerchant` = {merchant_id} AND `loyalty_segment_id` = 'lostCustomer'
+
+  # ──────────────────────────────────────────────────────────────────────────
+  MerchantSummary:
+    description: >
+      Overall merchant-level totals. ONE row per merchant with lifetime aggregates
+      across all branches, customers, orders, revenue, and campaigns.
+      Use for "total revenue", "how many customers", "business overview".
+      Cannot filter by date — all values are lifetime.
+    intent_category: merchant_overview
+    time_column: null
+    grain: one row per merchant
+    default_filters: []
+
+    column_groups:
+      customers: [total_customers, loyalty_participants, avg_loyalty_score]
+      revenue: [total_revenue, online_revenue, pickup_revenue, avg_order_value]
+      orders: [online_transaction_count, pickup_order_count, total_transaction_count]
+      branches: [total_branches, active_branches]
+      campaigns: [total_campaigns, active_campaigns, total_points_issued]
+      activity: [total_visits, last_activity_date, created_date]
+      identity: [idMerchant, merchant_name]
+
+    notes: >
+      ONE row per merchant — all metrics are lifetime totals. Cannot filter by date.
+      total_customers and total_visits may be 0 if the ETL hasn't populated them yet —
+      use loyalty_participants for customer count, or query DailyPerformanceSummary for visits.
+      total_revenue = online_revenue + pickup_revenue.
+
+    columns:
+      merchant_name:
+        type: string
+        description: "Merchant business name (e.g., 'Bold Cafe')."
+      created_date:
+        type: datetime
+        description: "Date the merchant account was created."
+      total_branches:
+        type: integer
+        description: "Total number of branches (active + inactive)."
+      active_branches:
+        type: integer
+        description: "Number of currently active branches."
+      total_customers:
+        type: integer
+        description: "Lifetime unique customer count (may be 0 if ETL not populated)."
+      total_visits:
+        type: integer
+        description: "Lifetime visit count (may be 0 if ETL not populated)."
+      total_revenue:
+        type: decimal
+        description: "Lifetime total revenue in SAR (online_revenue + pickup_revenue)."
+      online_revenue:
+        type: decimal
+        description: "Lifetime revenue from online coupon transactions in SAR."
+      pickup_revenue:
+        type: decimal
+        description: "Lifetime revenue from pickup orders in SAR."
+      online_transaction_count:
+        type: integer
+        description: "Lifetime count of online coupon transactions."
+      pickup_order_count:
+        type: integer
+        description: "Lifetime count of pickup orders."
+      total_transaction_count:
+        type: integer
+        description: "Lifetime total transaction count (all channels)."
+      total_campaigns:
+        type: integer
+        description: "Total number of campaigns ever created."
+      active_campaigns:
+        type: integer
+        description: "Number of currently active (non-deleted) campaigns."
+      total_points_issued:
+        type: integer
+        description: "Lifetime loyalty points issued to customers."
+      loyalty_participants:
+        type: integer
+        description: "Total members in the loyalty program. Use this for 'how many customers' when total_customers is 0."
+      avg_loyalty_score:
+        type: integer
+        description: "Average loyalty score across all customers."
+      avg_order_value:
+        type: decimal
+        description: "Average order value in SAR (total_revenue / total_transaction_count)."
+      last_activity_date:
+        type: datetime
+        description: "Date of the most recent activity for this merchant (may be NULL)."
+
+    column_corrections: {}
+
+    routing_examples:
+      - "total number of customers"
+      - "total lifetime revenue"
+      - "how many branches do I have"
+      - "overall business summary"
+      - "how many customers do I have in total"
+      - "what is my total revenue"
+      - "how many campaigns do I have"
+      - "كم عدد العملاء الكلي"
+      - "إجمالي الإيرادات"
+      - "كم عدد الفروع"
+      - "ملخص عام"
+      - "كم التوتال حق الإيرادات"
+      - "إجمالي الزيارات"
+      - "وش وضع المحل بشكل عام"
+
+    few_shot_examples: ""
+
+  # ──────────────────────────────────────────────────────────────────────────
+  CampaignSummary:
+    description: >
+      Campaign performance metrics. Each row is one campaign with its title, type,
+      dates, coupons issued/redeemed, redemption rate, revenue, and ROI.
+      Use for "campaign performance", "best campaign", "redemption rates".
+    intent_category: campaigns
+    time_column: null
+    grain: one row per campaign
+    default_filters: []
+
+    column_groups:
+      performance: [redemption_rate, revenue_generated, campaign_roi]
+      coupons: [total_coupons_issued, coupons_used, customers_reached]
+      pricing: [oldPrice, newPrice, discount, discount_amount]
+      metadata: [campaign_id, campaign_title, campaign_type_id, campaign_type_name, start_date, end_date]
+      identity: [idMerchant]
+
+    notes: >
+      One row per campaign. Many campaigns may exist (1000+).
+      IMPORTANT: When asked about "campaign rates", "campaign performance", or "redemption rates",
+      ALWAYS include campaign_title in group_by to show per-campaign breakdown.
+      Do NOT use AVG(redemption_rate) — show each campaign's individual rate.
+      campaign_type_id: 5=Gift, 7=Loyalty Reward, 8=Gift Card.
+      end_date may be NULL for campaigns with no expiration.
+
+    columns:
+      campaign_id:
+        type: string
+        description: "Campaign unique identifier (UUID)."
+      campaign_title:
+        type: string
+        description: "Campaign title / name set by the merchant (e.g., 'Pistachio Latte', '50 Riyals Coupon')."
+      campaign_type_id:
+        type: integer
+        description: "Campaign type ID: 5=Gift, 7=Loyalty Reward, 8=Gift Card."
+      campaign_type_name:
+        type: string
+        description: "Human-readable campaign type name."
+      start_date:
+        type: datetime
+        description: "Campaign start date (DATETIME)."
+      end_date:
+        type: decimal
+        description: "Campaign expiration date (may be NULL for no-expiry campaigns)."
+      oldPrice:
+        type: decimal
+        description: "Original item price before discount in SAR."
+      newPrice:
+        type: decimal
+        description: "Discounted item price in SAR."
+      discount:
+        type: decimal
+        description: "Discount percentage (0-100)."
+      discount_amount:
+        type: decimal
+        description: "Discount amount in SAR."
+      total_coupons_issued:
+        type: decimal
+        description: "Number of coupons / vouchers issued for this campaign."
+      coupons_used:
+        type: decimal
+        description: "Number of coupons actually redeemed by customers."
+      customers_reached:
+        type: decimal
+        description: "Number of unique customers who received or interacted with this campaign."
+      redemption_rate:
+        type: decimal
+        description: "Percentage of issued coupons that were redeemed (%). 0-100."
+      revenue_generated:
+        type: decimal
+        description: "Total revenue generated by this campaign in SAR."
+      campaign_roi:
+        type: decimal
+        description: "Return on investment for this campaign."
+
+    column_corrections:
+      campaign_name: campaign_title
+      name: campaign_title
+      title: campaign_title
+      redeemed_count: coupons_used
+      redemptions: coupons_used
+      total_redemptions: coupons_used
+      sent_count: total_coupons_issued
+      issued_count: total_coupons_issued
+      coupons_sent: total_coupons_issued
+      campaign_revenue: revenue_generated
+
+    routing_examples:
+      - "campaign performance"
+      - "which campaign has the best redemption rate"
+      - "best performing campaign"
+      - "campaign ROI"
+      - "how many coupons were redeemed"
+      - "show me campaign redemption rates"
+      - "أداء الحملات"
+      - "أفضل حملة"
+      - "وش أفضل عرض عندي"
+      - "كم نسبة الاسترداد"
+      - "عطني نتائج الحملات"
+      - "العروض اللي اشتغلت"
+      - "أداء الكوبونات"
+      - "حملاتي كيف أداؤها"
+
+    few_shot_examples: |
+      Q: "Show me campaign performance"
+      SQL: SELECT `campaign_title`, `redemption_rate`, `revenue_generated`, `coupons_used`, `total_coupons_issued` FROM `CampaignSummary` WHERE `idMerchant` = {merchant_id} AND `isDeleted` = 0
+
+      Q: "What is my best campaign?"
+      SQL: SELECT `campaign_title`, `revenue_generated`, `redemption_rate` FROM `CampaignSummary` WHERE `idMerchant` = {merchant_id} AND `isDeleted` = 0 ORDER BY `revenue_generated` DESC LIMIT 5
+
+  # ──────────────────────────────────────────────────────────────────────────
+  GeographicPerformanceSummary:
+    description: >
+      Per-branch lifetime performance. Each row = one branch with total visits,
+      customers, revenue, and location data. Use for "which branch is best",
+      "branch comparison", "revenue by branch".
+    intent_category: branch_comparison
+    time_column: null
+    grain: one row per branch
+    default_filters: []
+
+    column_groups:
+      visits: [total_visits, unique_customers]
+      revenue: [total_revenue, pickup_revenue, total_branch_revenue, revenue_per_visit]
+      loyalty: [points_issued]
+      location: [idCity, city_name, lat, lng]
+      status: [isActive]
+      identity: [idMerchant, idBranch, branch_name]
+
+    notes: >
+      One row per branch — lifetime totals. No date filtering.
+      Contains location data (lat/lng, city) for geographic analysis.
+      isActive: 1 = currently active branch, 0 = closed/inactive.
+      total_revenue = online revenue only. total_branch_revenue = online + pickup.
+      revenue_per_visit = total_branch_revenue / total_visits.
+
+    columns:
+      idBranch:
+        type: integer
+        description: "Branch unique identifier."
+      branch_name:
+        type: string
+        description: "Branch name (e.g., 'Nahda', 'Kharj-Hada', 'Al Burj')."
+      idCity:
+        type: integer
+        description: "City identifier."
+      city_name:
+        type: string
+        description: "City name (may be NULL if not mapped)."
+      lat:
+        type: decimal
+        description: "Branch latitude coordinate."
+      lng:
+        type: decimal
+        description: "Branch longitude coordinate."
+      isActive:
+        type: integer
+        description: "Whether the branch is currently active (1=active, 0=inactive/closed)."
+      total_visits:
+        type: decimal
+        description: "Total lifetime customer visits at this branch."
+      unique_customers:
+        type: decimal
+        description: "Total unique customers who ever visited this branch."
+      points_issued:
+        type: decimal
+        description: "Total loyalty points issued at this branch."
+      total_revenue:
+        type: decimal
+        description: "Online revenue at this branch in SAR."
+      pickup_revenue:
+        type: decimal
+        description: "Pickup revenue at this branch in SAR."
+      total_branch_revenue:
+        type: decimal
+        description: "Total revenue (online + pickup) at this branch in SAR."
+      revenue_per_visit:
+        type: decimal
+        description: "Average revenue per visit at this branch (total_branch_revenue / total_visits)."
+
+    column_corrections: {}
+
+    routing_examples:
+      - "which branch has the most visits"
+      - "branch comparison"
+      - "revenue by branch"
+      - "best performing branch"
+      - "worst branch performance"
+      - "compare branches"
+      - "أفضل فرع"
+      - "مقارنة الفروع"
+      - "وش أفضل فرع عندي"
+      - "أسوأ فرع"
+      - "الفروع حسب الإيرادات"
+      - "عطني أداء الفروع"
+      - "كم زيارة في كل فرع"
+
+    few_shot_examples: |
+      Q: "Which branch has the most visits?"
+      SQL: SELECT `branch_name`, `total_visits`, `unique_customers`, `total_branch_revenue` FROM `GeographicPerformanceSummary` WHERE `idMerchant` = {merchant_id} ORDER BY `total_visits` DESC
+
+      Q: "Compare branch performance"
+      SQL: SELECT `branch_name`, `total_visits`, `total_branch_revenue`, `revenue_per_visit`, `isActive` FROM `GeographicPerformanceSummary` WHERE `idMerchant` = {merchant_id} ORDER BY `total_branch_revenue` DESC
+
+  # ──────────────────────────────────────────────────────────────────────────
+  PaymentAnalyticsSummary:
+    description: >
+      Payment method statistics. Each row = one payment method + channel combination.
+      Shows transaction volume, revenue, and share by payment type (MADA, VISA, APPLEPAY, etc.).
+    intent_category: payment_methods
+    time_column: null
+    grain: one row per payment method per channel
+    default_filters: []
+
+    column_groups:
+      revenue: [total_amount, avg_transaction_value, total_vat]
+      transactions: [transaction_count, method_share]
+      method: [payment_method_id, payment_method_name, channel]
+      identity: [idMerchant]
+
+    notes: >
+      One row per payment method + channel. Lifetime data — no date filtering.
+      IMPORTANT: payment_method_name is often NULL. Use payment_method_id for grouping and display
+      (values: MADA, VISA, APPLEPAY, MASTER, MAESTRO, AMEX, etc.).
+      channel is typically 'online' for all rows. method_share sums to 100% across all methods.
+
+    columns:
+      payment_method_id:
+        type: string
+        description: "Payment method code: 'MADA', 'VISA', 'APPLEPAY', 'MASTER', 'MAESTRO', 'AMEX', etc."
+      payment_method_name:
+        type: string
+        description: "Payment method display name (often NULL — prefer payment_method_id)."
+      channel:
+        type: string
+        description: "Transaction channel: 'online' or 'pickup'."
+      total_amount:
+        type: decimal
+        description: "Total transaction amount in SAR for this payment method."
+      transaction_count:
+        type: integer
+        description: "Number of transactions using this payment method."
+      avg_transaction_value:
+        type: decimal
+        description: "Average transaction value in SAR (total_amount / transaction_count)."
+      total_vat:
+        type: decimal
+        description: "Total VAT amount collected in SAR."
+      method_share:
+        type: decimal
+        description: "This method's share of total merchant revenue (%). All methods sum to 100%."
+
+    column_corrections:
+      total_revenue: total_amount
+      revenue: total_amount
+      amount: total_amount
+
+    routing_examples:
+      - "payment method breakdown"
+      - "cash vs card payments"
+      - "revenue by payment type"
+      - "which payment method is most used"
+      - "how do customers pay"
+      - "MADA vs VISA breakdown"
+      - "طرق الدفع"
+      - "نقد مقابل بطاقة"
+      - "كيف يدفعون العملاء"
+      - "وش أكثر طريقة دفع"
+      - "مدى مقابل فيزا"
+      - "عطني breakdown حق الدفع"
+      - "كم نسبة أبل باي"
+
+    few_shot_examples: |
+      Q: "Revenue breakdown by payment method"
+      SQL: SELECT `payment_method_id`, `payment_method_name`, SUM(`total_amount`) as total FROM `PaymentAnalyticsSummary` WHERE `idMerchant` = {merchant_id} GROUP BY `payment_method_id`, `payment_method_name` ORDER BY total DESC
+
+      Q: "Payment method breakdown with shares"
+      SQL: SELECT `payment_method_id`, `payment_method_name`, `channel`, `total_amount`, `method_share` FROM `PaymentAnalyticsSummary` WHERE `idMerchant` = {merchant_id} ORDER BY `total_amount` DESC
+
+  # ──────────────────────────────────────────────────────────────────────────
+  PickupOrderSummary:
+    description: >
+      Pickup order status breakdown. Each row = one order status (done, rejected, returned, timeout)
+      with its count, revenue, and percentage. Lifetime data only — no date column.
+    intent_category: order_status
+    time_column: null
+    grain: one row per order status
+    default_filters: []
+
+    column_groups:
+      orders: [order_count, total_orders_merchant, percentage_of_orders]
+      revenue: [total_revenue, total_revenue_merchant]
+      customers: [unique_customers]
+      status: [order_status_id, status_name_en, status_name_ar]
+      identity: [idMerchant]
+
+    notes: >
+      One row per order status. ALL-TIME data — NO date columns exist.
+      Cannot filter by date. Shows overall breakdown by status.
+      total_orders_merchant and total_revenue_merchant are the same across all rows (merchant-level totals).
+      percentage_of_orders = order_count / total_orders_merchant * 100.
+
+    columns:
+      order_status_id:
+        type: integer
+        description: "Numeric status ID: 4=Done (completed), 5=Rejected, 6=Returned, 7=Timeout."
+      status_name_en:
+        type: string
+        description: "English status name: 'Done', 'Rejected', 'Returned', 'Timeout'."
+      status_name_ar:
+        type: string
+        description: "Arabic status name."
+      order_count:
+        type: integer
+        description: "Number of orders with this specific status."
+      total_revenue:
+        type: decimal
+        description: "Revenue in SAR from orders with this status."
+      unique_customers:
+        type: integer
+        description: "Number of unique customers who had orders with this status."
+      total_orders_merchant:
+        type: integer
+        description: "Total orders across ALL statuses for this merchant (same in every row)."
+      total_revenue_merchant:
+        type: decimal
+        description: "Total revenue across ALL statuses for this merchant in SAR (same in every row)."
+      percentage_of_orders:
+        type: decimal
+        description: "This status as a percentage of total_orders_merchant (%)."
+
+    column_corrections: {}
+
+    routing_examples:
+      - "total orders"
+      - "rejected orders"
+      - "order status breakdown"
+      - "how many orders were returned"
+      - "accepted vs rejected orders"
+      - "الطلبات المرفوضة"
+      - "حالة الطلبات"
+      - "كم طلب مرفوض"
+      - "عطني breakdown حق الطلبات"
+      - "وش حالة الطلبات"
+      - "الطلبات المكتملة مقابل المرفوضة"
+
+    few_shot_examples: |
+      Q: "Order status breakdown"
+      SQL: SELECT `status_name_en`, `order_count`, `percentage_of_orders`, `total_revenue` FROM `PickupOrderSummary` WHERE `idMerchant` = {merchant_id} ORDER BY `order_count` DESC
+
+      Q: "How many orders were rejected?"
+      SQL: SELECT `order_count`, `total_revenue` FROM `PickupOrderSummary` WHERE `idMerchant` = {merchant_id} AND `order_status_id` = 5
+
+  # ──────────────────────────────────────────────────────────────────────────
+  POSComparisonSummary:
+    description: >
+      POS (point-of-sale) vs app channel comparison. ONE row per merchant showing
+      pickup revenue/orders vs POS revenue/orders with share percentages.
+      Use for "POS vs app", "in-store vs online", "pickup vs POS".
+    intent_category: pos_vs_app
+    time_column: null
+    grain: one row per merchant
+    default_filters: []
+
+    column_groups:
+      pickup: [pickup_revenue, pickup_order_count, pickup_unique_customers, pickup_revenue_share]
+      pos: [pos_revenue, pos_order_count, pos_revenue_share]
+      totals: [total_revenue, total_orders]
+      identity: [idMerchant]
+
+    notes: >
+      ONE row per merchant. Lifetime POS vs Pickup comparison.
+      This table does NOT track individual products — it compares channels (app pickup vs in-store POS).
+      If the user asks about specific products or best-selling items, this table cannot help —
+      that data is not available in the system.
+
+    columns:
+      pickup_revenue:
+        type: decimal
+        description: "Revenue from app-based pickup orders in SAR."
+      pickup_order_count:
+        type: integer
+        description: "Number of orders placed through the app (pickup)."
+      pickup_unique_customers:
+        type: integer
+        description: "Unique customers who placed pickup orders through the app."
+      pos_revenue:
+        type: decimal
+        description: "Revenue from in-store POS transactions in SAR."
+      pos_order_count:
+        type: integer
+        description: "Number of in-store POS transactions."
+      total_revenue:
+        type: decimal
+        description: "Total revenue across both channels (pickup_revenue + pos_revenue) in SAR."
+      total_orders:
+        type: integer
+        description: "Total orders across both channels."
+      pickup_revenue_share:
+        type: decimal
+        description: "Pickup revenue as percentage of total revenue (%)."
+      pos_revenue_share:
+        type: decimal
+        description: "POS revenue as percentage of total revenue (%)."
+
+    column_corrections: {}
+
+    routing_examples:
+      - "POS vs app comparison"
+      - "best selling product"
+      - "top items sold"
+      - "in-store vs online sales"
+      - "pickup vs POS revenue"
+      - "أفضل منتج مبيعا"
+      - "مقارنة المبيعات"
+      - "مقارنة الأونلاين مع المحل"
+      - "مبيعات التطبيق مقابل المحل"
+      - "وش أكثر أونلاين ولا المحل"
+      - "كم نسبة الطلبات الأونلاين"
+      - "POS مقابل التطبيق"
+
+    few_shot_examples: |
+      Q: "POS vs app comparison"
+      SQL: SELECT `pickup_revenue`, `pos_revenue`, `pickup_revenue_share`, `pos_revenue_share`, `total_revenue` FROM `POSComparisonSummary` WHERE `idMerchant` = {merchant_id}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Terminology
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Table Relationships — Compatibility declarations for answerability checking
+# ═══════════════════════════════════════════════════════════════════════════════
+# These are NOT join paths — our tables are pre-aggregated summaries.
+# This declares which tables share dimensions (for multi-facet questions)
+# and which tables CANNOT be combined (for answerability rejection).
+
+relationships:
+  DailyPerformanceSummary:
+    shares_dimension:
+      GeographicPerformanceSummary: [idBranch, branch_name]
+      MonthlyPerformanceSummary: [idBranch, branch_name]
+    cannot_combine_with: [CustomerSummary, LoyaltyProgramSummary, CampaignSummary, PaymentAnalyticsSummary]
+
+  MonthlyPerformanceSummary:
+    shares_dimension:
+      DailyPerformanceSummary: [idBranch, branch_name]
+      GeographicPerformanceSummary: [idBranch, branch_name]
+    cannot_combine_with: [CustomerSummary, LoyaltyProgramSummary, CampaignSummary, PaymentAnalyticsSummary]
+
+  CustomerSummary:
+    shares_dimension:
+      LoyaltyProgramSummary: [loyalty_segment_id]
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, GeographicPerformanceSummary, PaymentAnalyticsSummary, PickupOrderSummary, POSComparisonSummary]
+
+  LoyaltyProgramSummary:
+    shares_dimension:
+      CustomerSummary: [loyalty_segment_id]
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, GeographicPerformanceSummary, PaymentAnalyticsSummary, CampaignSummary, PickupOrderSummary, POSComparisonSummary]
+
+  MerchantSummary:
+    shares_dimension: {}
+    cannot_combine_with: [CustomerSummary, LoyaltyProgramSummary, CampaignSummary, PaymentAnalyticsSummary, PickupOrderSummary]
+
+  CampaignSummary:
+    shares_dimension: {}
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, CustomerSummary, LoyaltyProgramSummary, GeographicPerformanceSummary, PaymentAnalyticsSummary, PickupOrderSummary, POSComparisonSummary]
+
+  GeographicPerformanceSummary:
+    shares_dimension:
+      DailyPerformanceSummary: [idBranch, branch_name]
+      MonthlyPerformanceSummary: [idBranch, branch_name]
+    cannot_combine_with: [CustomerSummary, LoyaltyProgramSummary, CampaignSummary, PaymentAnalyticsSummary, PickupOrderSummary, POSComparisonSummary]
+
+  PaymentAnalyticsSummary:
+    shares_dimension: {}
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, CustomerSummary, LoyaltyProgramSummary, CampaignSummary, GeographicPerformanceSummary, PickupOrderSummary, POSComparisonSummary]
+
+  PickupOrderSummary:
+    shares_dimension: {}
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, CustomerSummary, LoyaltyProgramSummary, CampaignSummary, GeographicPerformanceSummary, PaymentAnalyticsSummary, POSComparisonSummary]
+
+  POSComparisonSummary:
+    shares_dimension: {}
+    cannot_combine_with: [DailyPerformanceSummary, MonthlyPerformanceSummary, CustomerSummary, LoyaltyProgramSummary, CampaignSummary, GeographicPerformanceSummary, PaymentAnalyticsSummary, PickupOrderSummary]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Verified Query Templates — Deterministic SQL for common patterns
+# ═══════════════════════════════════════════════════════════════════════════════
+# Matched via regex, parameters filled deterministically.
+# Bypasses LLM entirely → zero nondeterminism, zero hallucination.
+# Inspired by Snowflake VQR + Databricks Trusted Assets.
+
+verified_queries:
+  # ── New Customer Registration ──
+  - pattern: "(?:how many|count|number of|عدد)\\s+(?:new\\s+)?customers?\\s+(?:registered|joined|signed\\s+up)(?:\\s+(?:this|last)\\s+(?:month|week))?"
+    table: CustomerSummary
+    template: >
+      SELECT COUNT(*) as new_customers
+      FROM `CustomerSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `registration_date` >= '{start_date}'
+      AND `registration_date` < '{end_date_exclusive}'
+      LIMIT 100
+    time_range: extract_from_question
+    default_preset: this_month
+
+  # ── Total Revenue (time-filtered) ──
+  - pattern: "(?:what\\s+(?:is|was|are)\\s+)?(?:my\\s+|the\\s+)?(?:total\\s+)?(?<!daily\\s)revenue\\s+(?:for|in|during|last|this)\\s+"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT SUM(`total_revenue`) as total_revenue
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      LIMIT 100
+    time_range: extract_from_question
+    default_preset: last_7_days
+
+  # ── Daily Visits (time-filtered) ──
+  - pattern: "(?:show\\s+me\\s+|what\\s+(?:are|were)\\s+)?(?:the\\s+)?(?:daily\\s+)?visits?\\s+(?:for|in|during|last|this|over)\\s+"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT `performance_date`, SUM(`daily_visits`) as total_visits
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      GROUP BY `performance_date`
+      ORDER BY `performance_date` ASC
+      LIMIT 100
+    time_range: extract_from_question
+    default_preset: last_7_days
+
+  # ── Total Visits (aggregate) ──
+  - pattern: "(?:how many|total|عدد)\\s+(?:total\\s+)?visits?\\s+(?:for|in|during|last|this)\\s+"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT SUM(`daily_visits`) as total_visits
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      LIMIT 100
+    time_range: extract_from_question
+    default_preset: last_7_days
+
+  # ── Segment Breakdown ──
+  - pattern: "(?:segment|customer)\\s+(?:breakdown|distribution|counts?)|(?:how many|customers?)\\s+(?:in|per)\\s+each\\s+segment"
+    table: LoyaltyProgramSummary
+    template: >
+      SELECT `loyalty_segment_name`, `active_members`, `total_members`
+      FROM `LoyaltyProgramSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `loyalty_segment_id` != 'ALL'
+      LIMIT 100
+    time_range: none
+
+  # ── How Many Super Fans ──
+  - pattern: "(?:how many|count|number of|عدد)\\s+(?:super\\s*fans?|سوبر\\s*فان)"
+    table: LoyaltyProgramSummary
+    template: >
+      SELECT `active_members`
+      FROM `LoyaltyProgramSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `loyalty_segment_id` = 'superFan'
+      LIMIT 100
+    time_range: none
+
+  # ── How Many Lost Customers ──
+  - pattern: "(?:how many|count|number of|عدد)\\s+(?:lost\\s+customers?|عملاء\\s+مفقودين|العملاء\\s+المفقودين)"
+    table: LoyaltyProgramSummary
+    template: >
+      SELECT `active_members`
+      FROM `LoyaltyProgramSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `loyalty_segment_id` = 'lostCustomer'
+      LIMIT 100
+    time_range: none
+
+  # ── How Many New Customers (segment count, no time) ──
+  - pattern: "(?:how many|count|number of|كم\\s+عدد)\\s+(?:new\\s+customers?|عملاء\\s+جدد|العملاء\\s+الجدد)$"
+    table: LoyaltyProgramSummary
+    template: >
+      SELECT `active_members`
+      FROM `LoyaltyProgramSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `loyalty_segment_id` = 'newCustomer'
+      LIMIT 100
+    time_range: none
+
+  # ── New vs Lost Customers ──
+  - pattern: "(?:new\\s+vs\\s+lost|compare\\s+new\\s+and\\s+lost|new\\s+and\\s+lost)\\s+customers?"
+    table: LoyaltyProgramSummary
+    template: >
+      SELECT `loyalty_segment_name`, `active_members`, `total_members`
+      FROM `LoyaltyProgramSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `loyalty_segment_id` != 'ALL'
+      LIMIT 100
+    time_range: none
+
+  # ── Total Lifetime Revenue ──
+  - pattern: "(?:what\\s+(?:is|are)\\s+)?(?:my\\s+|the\\s+)?total\\s+(?:lifetime\\s+)?revenue$"
+    table: MerchantSummary
+    template: >
+      SELECT `total_revenue`, `online_revenue`, `pickup_revenue`
+      FROM `MerchantSummary`
+      WHERE `idMerchant` = {merchant_id}
+      LIMIT 100
+    time_range: none
+
+  # ── Total Customers ──
+  - pattern: "(?:how many|total|عدد|كم)\\s+(?:total\\s+)?customers?\\s+(?:do\\s+I\\s+have|are\\s+there|in\\s+total)?$"
+    table: MerchantSummary
+    template: >
+      SELECT `total_customers`, `loyalty_participants`
+      FROM `MerchantSummary`
+      WHERE `idMerchant` = {merchant_id}
+      LIMIT 100
+    time_range: none
+
+  # ── Branch Comparison ──
+  - pattern: "(?:which|what|best|worst|top|compare)\\s+(?:is\\s+the\\s+)?(?:best\\s+|worst\\s+|top\\s+)?branch"
+    table: GeographicPerformanceSummary
+    template: >
+      SELECT `branch_name`, `total_visits`, `total_branch_revenue`, `revenue_per_visit`, `isActive`
+      FROM `GeographicPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      ORDER BY `total_branch_revenue` DESC
+      LIMIT 100
+    time_range: none
+
+  # ── Campaign Performance ──
+  - pattern: "(?:campaign|show\\s+me\\s+campaign)\\s+(?:performance|results?|stats?)"
+    table: CampaignSummary
+    template: >
+      SELECT `campaign_title`, `redemption_rate`, `revenue_generated`, `coupons_used`, `total_coupons_issued`
+      FROM `CampaignSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `isDeleted` = 0
+      ORDER BY `revenue_generated` DESC
+      LIMIT 100
+    time_range: none
+
+  # ── Payment Method Breakdown ──
+  - pattern: "(?:payment\\s+method|how\\s+do\\s+customers?\\s+pay|payment\\s+breakdown|طرق?\\s+الدفع)"
+    table: PaymentAnalyticsSummary
+    template: >
+      SELECT `payment_method_id`, `total_amount`, `transaction_count`, `method_share`
+      FROM `PaymentAnalyticsSummary`
+      WHERE `idMerchant` = {merchant_id}
+      ORDER BY `total_amount` DESC
+      LIMIT 100
+    time_range: none
+
+  # ── Order Status Breakdown ──
+  - pattern: "(?:order|pickup)\\s+(?:status|breakdown)|(?:how many|total)\\s+(?:pickup\\s+)?orders?"
+    table: PickupOrderSummary
+    template: >
+      SELECT `status_name_en`, `order_count`, `percentage_of_orders`, `total_revenue`
+      FROM `PickupOrderSummary`
+      WHERE `idMerchant` = {merchant_id}
+      ORDER BY `order_count` DESC
+      LIMIT 100
+    time_range: none
+
+  # ── POS vs App Comparison ──
+  - pattern: "(?:POS|point\\s+of\\s+sale)\\s+vs\\s+(?:app|pickup|online)|(?:in-?store|pickup)\\s+vs\\s+(?:POS|online)"
+    table: POSComparisonSummary
+    template: >
+      SELECT `pickup_revenue`, `pos_revenue`, `pickup_revenue_share`, `pos_revenue_share`, `total_revenue`
+      FROM `POSComparisonSummary`
+      WHERE `idMerchant` = {merchant_id}
+      LIMIT 100
+    time_range: none
+
+  # ── Monthly Revenue Trend ──
+  - pattern: "monthly\\s+revenue\\s+(?:trend|over\\s+time)|revenue\\s+(?:per|by)\\s+month"
+    table: MonthlyPerformanceSummary
+    template: >
+      SELECT `year`, `month`, SUM(`total_monthly_revenue`) as revenue
+      FROM `MonthlyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      GROUP BY `year`, `month`
+      ORDER BY `year` DESC, `month` DESC
+      LIMIT 100
+    time_range: none
+
+  # ── Daily Revenue (time-filtered) ──
+  - pattern: "(?:daily|per\\s+day)\\s+revenue\\s+(?:for|in|during|last|this|over)\\s+"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT `performance_date`, SUM(`total_revenue`) as daily_revenue
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      GROUP BY `performance_date`
+      ORDER BY `performance_date` ASC
+      LIMIT 100
+    time_range: extract_from_question
+    default_preset: last_7_days
+
+  # ── Revenue Yesterday ──
+  - pattern: "(?:revenue|إيرادات)\\s+(?:yesterday|أمس)|(?:yesterday|أمس)(?:'s)?\\s+revenue"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT SUM(`total_revenue`) as total_revenue
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      LIMIT 100
+    time_range: yesterday
+
+  # ── Visits Today ──
+  - pattern: "(?:visits?|زيارات)\\s+(?:today|اليوم)|(?:today|اليوم)(?:'s)?\\s+visits?"
+    table: DailyPerformanceSummary
+    template: >
+      SELECT SUM(`daily_visits`) as total_visits
+      FROM `DailyPerformanceSummary`
+      WHERE `idMerchant` = {merchant_id}
+      AND `performance_date` >= '{start_date}'
+      AND `performance_date` < '{end_date_exclusive}'
+      LIMIT 100
+    time_range: today
+
+terminology:
+  segments:
+    superFan:
+      name: "Super Fan"
+      segment_id: "superFan"
+      arabic: "سوبر فان"
+      definition: "Visited more than the average, more than once every week"
+    loyalCustomer:
+      name: "Loyal"
+      segment_id: "loyalCustomer"
+      arabic: "عميل وفي"
+      definition: "Visited regularly, at least once over the past 2 weeks"
+    regularCustomer:
+      name: "Regular"
+      segment_id: "regularCustomer"
+      arabic: "عميل منتظم"
+      definition: "Visit regularly at least once a month"
+    newCustomer:
+      name: "New"
+      segment_id: "newCustomer"
+      arabic: "عميل جديد"
+      definition: "Joined the loyalty program this month"
+    lostCustomer:
+      name: "Lost"
+      segment_id: "lostCustomer"
+      arabic: "عميل مفقود"
+      definition: "Did not visit for 1 month and have more than 5 visits in total"
+    birthday:
+      name: "Birthday Present!"
+      segment_id: "birthday"
+      arabic: "هدية عيد ميلاد"
+      definition: "Have their birthday this month"
+    potentialCustomer:
+      name: "Potential"
+      segment_id: "potentialCustomer"
+      arabic: "عميل محتمل"
+      definition: "Did not visit for 1 month and have 5 or less visits in total"
+
+  reward_types:
+    rewards: "Loyalty points earned from purchases — customers SPEND points to get items/discounts (المكافآت)"
+    gifts: "Free items offered by merchant for birthdays, re-engagement (الهدايا)"
+    coupons: "Items customers BUY with money from the Store (الكوبونات)"
+
+  channels:
+    online: "idBranch = -1 (أونلاين)"
+    in_store: "idBranch > 0 (في المحل)"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Arabic Dictionary — Bilingual concept mapping for routing and understanding
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Maps Arabic terms (formal + Saudi dialect + Arabizi) to English concepts
+  # and the correct table. This helps the LLM bridge Arabic questions to the
+  # right data source without guessing.
+  #
+  # Format: arabic_term → { english, table, notes }
+
+  arabic_dictionary:
+    # ── Core Metrics ──────────────────────────────────────────────────────
+    زيارات:
+      english: "visits"
+      table: DailyPerformanceSummary
+      notes: "Use SUM(daily_visits). For 'today' use performance_date = CURDATE()."
+    زيارة:
+      english: "visit (singular)"
+      table: DailyPerformanceSummary
+    إيرادات:
+      english: "revenue"
+      table: DailyPerformanceSummary
+      notes: "Use SUM(total_revenue). For lifetime total, use MerchantSummary instead."
+    دخل:
+      english: "income / revenue"
+      table: DailyPerformanceSummary
+      notes: "Saudi dialect for revenue. Same as إيرادات."
+    مبيعات:
+      english: "sales"
+      table: DailyPerformanceSummary
+      notes: "Maps to total_revenue or total_orders depending on context."
+    أرباح:
+      english: "profit / earnings"
+      table: DailyPerformanceSummary
+      notes: "We track revenue, not profit. Treat as revenue and clarify to user."
+    ربح:
+      english: "profit (singular)"
+      table: DailyPerformanceSummary
+    revenue:
+      english: "revenue (Arabizi)"
+      table: DailyPerformanceSummary
+      notes: "English word used in Arabic sentences (code-switching). Common in Saudi business."
+
+    # ── Customers ─────────────────────────────────────────────────────────
+    عملاء:
+      english: "customers"
+      table: CustomerSummary
+      notes: "For segment counts use LoyaltyProgramSummary instead. For registration/visit history use CustomerSummary."
+    عميل:
+      english: "customer (singular)"
+      table: CustomerSummary
+    زبائن:
+      english: "customers (colloquial)"
+      table: CustomerSummary
+      notes: "Informal Arabic for customers. Same as عملاء."
+    زبون:
+      english: "customer (colloquial singular)"
+      table: CustomerSummary
+    عملاء جدد:
+      english: "new customers"
+      table: LoyaltyProgramSummary
+      notes: "For count use LoyaltyProgramSummary (loyalty_segment_id='newCustomer'). For registration date filtering use CustomerSummary."
+    عملاء مفقودين:
+      english: "lost customers"
+      table: LoyaltyProgramSummary
+      notes: "loyalty_segment_id = 'lostCustomer'"
+    مسجلين:
+      english: "registered"
+      table: CustomerSummary
+      notes: "Refers to customer registration. Use registration_date for time filtering."
+    سجلوا:
+      english: "signed up / registered"
+      table: CustomerSummary
+    انضموا:
+      english: "joined"
+      table: CustomerSummary
+
+    # ── Segments ──────────────────────────────────────────────────────────
+    شرائح:
+      english: "segments"
+      table: LoyaltyProgramSummary
+      notes: "Segment breakdown = loyalty_segment_name + active_members."
+    شريحة:
+      english: "segment (singular)"
+      table: LoyaltyProgramSummary
+    فئات:
+      english: "categories / segments"
+      table: LoyaltyProgramSummary
+      notes: "Used interchangeably with شرائح in Saudi dialect."
+    سوبر فان:
+      english: "Super Fan"
+      table: LoyaltyProgramSummary
+      notes: "loyalty_segment_id = 'superFan'"
+    وفي:
+      english: "loyal"
+      table: LoyaltyProgramSummary
+      notes: "loyalty_segment_id = 'loyalCustomer'"
+
+    # ── Branches ──────────────────────────────────────────────────────────
+    فروع:
+      english: "branches"
+      table: GeographicPerformanceSummary
+    فرع:
+      english: "branch (singular)"
+      table: GeographicPerformanceSummary
+    أفضل فرع:
+      english: "best branch"
+      table: GeographicPerformanceSummary
+      notes: "ORDER BY total_branch_revenue DESC or total_visits DESC."
+    مقارنة الفروع:
+      english: "compare branches"
+      table: GeographicPerformanceSummary
+
+    # ── Campaigns ─────────────────────────────────────────────────────────
+    حملات:
+      english: "campaigns"
+      table: CampaignSummary
+    حملة:
+      english: "campaign (singular)"
+      table: CampaignSummary
+    عروض:
+      english: "offers / promotions"
+      table: CampaignSummary
+      notes: "Saudi merchants often say عروض when they mean campaigns."
+    عرض:
+      english: "offer (singular)"
+      table: CampaignSummary
+    خصومات:
+      english: "discounts"
+      table: CampaignSummary
+    تخفيضات:
+      english: "discounts / sales"
+      table: CampaignSummary
+      notes: "Another word for discounts, common in Saudi dialect."
+    كوبونات:
+      english: "coupons"
+      table: CampaignSummary
+      notes: "Bonat terminology: coupons = items customers BUY with money from the Store."
+    استرداد:
+      english: "redemption"
+      table: CampaignSummary
+      notes: "Redemption rate = redemption_rate column."
+
+    # ── Payments ──────────────────────────────────────────────────────────
+    دفع:
+      english: "payment"
+      table: PaymentAnalyticsSummary
+    طرق الدفع:
+      english: "payment methods"
+      table: PaymentAnalyticsSummary
+    مدى:
+      english: "MADA (debit card)"
+      table: PaymentAnalyticsSummary
+      notes: "payment_method_id = 'MADA'"
+    فيزا:
+      english: "VISA"
+      table: PaymentAnalyticsSummary
+      notes: "payment_method_id = 'VISA'"
+    نقد:
+      english: "cash"
+      table: PaymentAnalyticsSummary
+    كاش:
+      english: "cash (Arabizi)"
+      table: PaymentAnalyticsSummary
+    بطاقة:
+      english: "card"
+      table: PaymentAnalyticsSummary
+    أبل باي:
+      english: "Apple Pay"
+      table: PaymentAnalyticsSummary
+      notes: "payment_method_id = 'APPLEPAY'"
+
+    # ── Orders ────────────────────────────────────────────────────────────
+    طلبات:
+      english: "orders"
+      table: PickupOrderSummary
+      notes: "For order status breakdown. For total order count, also check DailyPerformanceSummary.total_orders."
+    طلب:
+      english: "order (singular)"
+      table: PickupOrderSummary
+    مرفوض:
+      english: "rejected"
+      table: PickupOrderSummary
+      notes: "order_status_id = 5 for rejected orders."
+    مقبول:
+      english: "accepted"
+      table: PickupOrderSummary
+    مكتمل:
+      english: "completed / done"
+      table: PickupOrderSummary
+    حالة الطلبات:
+      english: "order status"
+      table: PickupOrderSummary
+
+    # ── Products / POS ────────────────────────────────────────────────────
+    منتج:
+      english: "product"
+      table: POSComparisonSummary
+      notes: >
+        IMPORTANT: POSComparisonSummary does NOT have product-level data.
+        It only compares channels (POS vs app). If the user asks about
+        specific products or best-selling items, honestly say that
+        product-level data is not available in the system.
+    منتجات:
+      english: "products"
+      table: POSComparisonSummary
+      notes: "Same caveat as منتج — no product-level data available."
+    أفضل منتج:
+      english: "best product"
+      table: POSComparisonSummary
+      notes: >
+        We do NOT have product-level data. The system cannot answer
+        'what is my best product'. Respond honestly that this data
+        is not tracked in the current system.
+    وش أفضل منتج:
+      english: "what's the best product (Saudi dialect)"
+      table: POSComparisonSummary
+      notes: "Same as أفضل منتج — product data not available. Be honest."
+    مقارنة المبيعات:
+      english: "sales comparison (POS vs app)"
+      table: POSComparisonSummary
+
+    # ── Loyalty / Points ──────────────────────────────────────────────────
+    نقاط:
+      english: "points (loyalty)"
+      table: LoyaltyProgramSummary
+      notes: "Loyalty points = المكافآت. Columns: points_earned, points_redeemed."
+    مكافآت:
+      english: "rewards / loyalty points"
+      table: LoyaltyProgramSummary
+    هدايا:
+      english: "gifts"
+      table: LoyaltyProgramSummary
+      notes: "Bonat gifts = free items from merchant (not points)."
+    ولاء:
+      english: "loyalty"
+      table: LoyaltyProgramSummary
+    برنامج الولاء:
+      english: "loyalty program"
+      table: LoyaltyProgramSummary
+
+    # ── Time Expressions ──────────────────────────────────────────────────
+    # These help resolve Arabic date expressions to the correct time presets.
+    اليوم:
+      english: "today"
+      notes: "Time preset: today. performance_date = CURDATE()."
+    أمس:
+      english: "yesterday"
+      notes: "Time preset: yesterday."
+    البارحة:
+      english: "yesterday (Saudi dialect)"
+      notes: "Same as أمس. Very common in Saudi Arabic."
+    هذا الأسبوع:
+      english: "this week"
+      notes: "Time preset: this_week. Monday to today."
+    الأسبوع الماضي:
+      english: "last week"
+      notes: "Time preset: last_week. LAST CALENDAR WEEK (Monday–Sunday), NOT last 7 days."
+    آخر أسبوع:
+      english: "last week (colloquial)"
+      notes: "Same as الأسبوع الماضي — means LAST CALENDAR WEEK (Monday–Sunday)."
+    هذا الشهر:
+      english: "this month"
+      notes: "Time preset: this_month. 1st of current month to today."
+    الشهر الماضي:
+      english: "last month"
+      notes: "Time preset: last_month. Full previous calendar month."
+    آخر شهر:
+      english: "last month (colloquial)"
+      notes: "Same as الشهر الماضي."
+    آخر ٧ أيام:
+      english: "last 7 days"
+      notes: "Time preset: last_7_days."
+    آخر ٣٠ يوم:
+      english: "last 30 days"
+      notes: "Time preset: last_30_days."
+    هذي السنة:
+      english: "this year (Saudi dialect)"
+      notes: "Current calendar year."
+    السنة الماضية:
+      english: "last year"
+      notes: "Previous calendar year."
+
+    # ── Common Saudi Dialect / Arabizi ────────────────────────────────────
+    # Saudi merchants mix Arabic with English words (code-switching).
+    # These handle the most common patterns.
+    ابي:
+      english: "I want (Saudi dialect)"
+      notes: "أبي أشوف = I want to see. Very common Saudi expression."
+    أبي أشوف:
+      english: "I want to see"
+      notes: "Common Saudi prefix for data requests."
+    عطني:
+      english: "give me (Saudi dialect)"
+      notes: "عطني breakdown = give me a breakdown."
+    وش:
+      english: "what (Saudi dialect)"
+      notes: "وش أفضل = what's the best. Saudi colloquial for ما/ماذا."
+    كم:
+      english: "how many / how much"
+      notes: "كم عدد = how many. كم الإيرادات = how much revenue."
+    حق:
+      english: "of / for (Saudi dialect)"
+      notes: "revenue حق آخر أسبوع = revenue for last week. Possessive marker."
+    breakdown:
+      english: "breakdown (English word in Arabic context)"
+      notes: "Commonly used as-is in Arabic sentences. عطني breakdown = give me a breakdown."
+    ترند:
+      english: "trend"
+      notes: "English 'trend' used in Arabic. ترند الزيارات = visit trend."
+    توتال:
+      english: "total"
+      notes: "English 'total' used in Arabic. التوتال = the total."
+    أفضل:
+      english: "best"
+      notes: "أفضل فرع = best branch, أفضل حملة = best campaign."
+    أسوأ:
+      english: "worst"
+      notes: "أسوأ فرع = worst branch."
+    مقارنة:
+      english: "comparison"
+      notes: "مقارنة الفروع = compare branches."
+    إجمالي:
+      english: "total / aggregate"
+      notes: "إجمالي الإيرادات = total revenue."

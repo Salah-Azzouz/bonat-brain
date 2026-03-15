@@ -1,0 +1,1060 @@
+/* Custom styles for Bonat AI Agent Chat Interface */
+
+/* Import Inter font from Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+    background: linear-gradient(135deg, #f5f7fa 0%, #ffffff 100%);
+    min-height: 100vh;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.chat-container {
+    max-height: 600px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 24px 16px 24px 0;
+    background-color: transparent;
+    border: none;
+    width: 100%;
+}
+
+.message {
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.user-message {
+    align-items: flex-end;
+}
+
+.ai-message {
+    align-items: flex-start;
+}
+
+.message-content {
+    max-width: 75%;
+    padding: 16px 20px;
+    word-wrap: break-word;
+    line-height: 1.65;
+    color: #2d333a;
+    border-radius: 18px;
+    font-size: 15px;
+}
+
+/* ============================================
+   Insights Typography & Visual Hierarchy
+   ============================================ */
+
+/* Bold numbers and data stand out in brand color */
+.ai-message .message-content strong {
+    font-weight: 600;
+    color: #e86a10;
+}
+
+/* Section headers - bigger and bolder than body text */
+.ai-message .message-content .insight-section-header {
+    display: block;
+    font-size: 16px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-top: 20px;
+    margin-bottom: 6px;
+}
+
+/* First section header doesn't need top margin */
+.ai-message .message-content .insight-section-header:first-child {
+    margin-top: 0;
+}
+
+/* "Something to consider" section - subtle background tint */
+.ai-message .message-content .insight-tip {
+    margin-top: 20px;
+    padding: 14px 16px;
+    background: rgba(253, 126, 20, 0.06);
+    border-radius: 8px;
+    border-left: 3px solid #fd7e14;
+}
+
+/* Header inside tip section */
+.ai-message .message-content .insight-tip-header {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-bottom: 8px;
+}
+
+/* Reduce spacing from line breaks in insights */
+.ai-message .message-content br + br {
+    display: none;
+}
+
+/* Insights message container */
+.insights-message .message-content {
+    max-width: 85%;
+    padding: 18px 22px;
+}
+
+.user-message .message-content {
+    background: #fd7e14;
+    color: #ffffff;
+    font-weight: 400;
+    border-bottom-right-radius: 4px;
+}
+
+.ai-message .message-content {
+    background: #f3f4f6;
+    color: #2d333a;
+    border-bottom-left-radius: 4px;
+}
+
+.message small {
+    margin-top: 4px;
+    margin-bottom: 0;
+    font-size: 0.7em;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #9ca3af;
+    align-self: flex-start;
+}
+
+.user-message small {
+    align-self: flex-end;
+}
+
+.welcome-message {
+    text-align: left;
+    margin-bottom: 32px;
+}
+
+.welcome-message .ai-message {
+    align-items: flex-start;
+}
+
+.welcome-message .message-content {
+    color: #2d333a;
+    font-size: 15px;
+    max-width: 75%;
+    background: #f3f4f6;
+    padding: 12px 16px;
+    border-radius: 18px;
+    border-bottom-left-radius: 4px;
+}
+
+/* Old input form styling - now handled by ChatGPT-style buttons below */
+
+/* Loading animation */
+.spinner-border {
+    width: 2rem;
+    height: 2rem;
+}
+
+.spinner-border.text-primary {
+    color: #fd7e14 !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .col-md-8 {
+        margin: 0 10px;
+    }
+    
+    .message-content {
+        max-width: 90%;
+    }
+    
+    .welcome-message .message-content {
+        max-width: 95%;
+    }
+}
+
+/* Scrollbar styling */
+.chat-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+.chat-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.chat-container::-webkit-scrollbar-thumb {
+    background: #fd7e14;
+    border-radius: 3px;
+}
+
+.chat-container::-webkit-scrollbar-thumb:hover {
+    background: #e55a00;
+}
+
+/* Card - modern styling */
+.card {
+    border: none;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+    background: white;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.card-body {
+    background: white;
+    padding: 20px 24px 24px 24px;
+}
+
+/* Top action buttons */
+.top-actions {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 12px;
+}
+
+.btn-clear-top {
+    background: linear-gradient(135deg, #fd7e14 0%, #ff9f43 100%);
+    border: 1px solid #fd7e14;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: white;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(253, 126, 20, 0.2);
+}
+
+.btn-clear-top:hover {
+    background: linear-gradient(135deg, #e55a00 0%, #fd7e14 100%);
+    border-color: #e55a00;
+    color: white;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(253, 126, 20, 0.3);
+}
+
+.btn-clear-top i {
+    font-size: 11px;
+    margin-right: 6px;
+}
+
+.btn-logout-top {
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.btn-logout-top:hover {
+    background: #fee2e2;
+    border-color: #ef4444;
+    color: #ef4444;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.btn-logout-top i {
+    font-size: 11px;
+    margin-right: 6px;
+}
+
+/* ============================================
+   MERCHANT SELECTOR
+   ============================================ */
+
+.merchant-selector-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 4px 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transition: all 0.2s ease;
+}
+
+.merchant-selector-container:hover {
+    border-color: #fd7e14;
+    box-shadow: 0 4px 12px rgba(253, 126, 20, 0.15);
+}
+
+.merchant-label {
+    color: #fd7e14;
+    font-size: 14px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+}
+
+.merchant-select {
+    border: none;
+    background: transparent;
+    color: #2d333a;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 24px 4px 4px;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    min-width: 80px;
+}
+
+.merchant-select:focus {
+    outline: none;
+}
+
+.merchant-select option {
+    padding: 8px;
+    font-size: 13px;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .merchant-selector-container {
+        padding: 4px 8px;
+    }
+
+    .merchant-label {
+        font-size: 12px;
+    }
+
+    .merchant-select {
+        font-size: 12px;
+        min-width: 60px;
+    }
+}
+
+/* Chat header */
+.card-header {
+    position: relative;
+    border: none;
+    border-bottom: 1px solid #f3f4f6;
+    background: white;
+    padding: 24px;
+    border-radius: 16px 16px 0 0;
+}
+
+.card-header h3 {
+    margin: 0;
+    text-align: center;
+    font-size: 24px;
+    font-weight: 700;
+    color: #2d333a;
+}
+
+.brand-logo {
+    background: linear-gradient(135deg, #fd7e14 0%, #ff9f43 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 800;
+}
+
+/* Removed old footer button styles */
+
+/* Removed old header styling - no longer needed */
+
+/* Animation for new messages */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message {
+    animation: slideIn 0.3s ease-out;
+}
+
+/* AI Response Styling */
+.ai-message .message-content {
+    line-height: 1.6;
+    font-size: 14px;
+}
+
+.ai-message .message-content strong {
+    color: #fd7e14;
+    font-weight: 600;
+}
+
+.user-message .message-content strong {
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.ai-message .message-content ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.ai-message .message-content li {
+    margin-bottom: 8px;
+    padding-left: 5px;
+}
+
+.ai-message .message-content h3,
+.ai-message .message-content h4 {
+    color: #fd7e14;
+    margin: 15px 0 10px 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* Clear button styling */
+.btn-outline-secondary {
+    border-color: #fd7e14;
+    color: #fd7e14;
+}
+
+.btn-outline-secondary:hover {
+    background-color: #fd7e14;
+    border-color: #fd7e14;
+    color: white;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* STREAMING STYLES */
+/* ═══════════════════════════════════════════════════════════ */
+
+/* Cursor blink animation */
+@keyframes cursor-blink {
+    0%, 49% {
+        opacity: 1;
+    }
+    50%, 100% {
+        opacity: 0;
+    }
+}
+
+.cursor-blink {
+    display: inline-block;
+    color: #6b7280;
+    animation: cursor-blink 1s infinite;
+    font-weight: normal;
+    margin-left: 1px;
+}
+
+/* Typing indicator animation */
+@keyframes typing-dots {
+    0%, 20% {
+        opacity: 0.3;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.3;
+    }
+}
+
+.typing-indicator {
+    font-size: 12px;
+    color: #9ca3af;
+    letter-spacing: 2px;
+    animation: typing-dots 1.5s infinite;
+    font-weight: normal;
+}
+
+/* Status indicator */
+.streaming-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    margin: 10px 0;
+    background-color: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 8px;
+    color: #856404;
+    font-size: 14px;
+    animation: slideIn 0.3s ease-out;
+}
+
+.streaming-status .spinner-border {
+    width: 1rem;
+    height: 1rem;
+    border-width: 2px;
+    color: #fd7e14;
+}
+
+/* Streaming message highlight - removed to avoid visual clutter */
+.message.streaming {
+    position: relative;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* Streaming is now always enabled - no toggle needed */
+
+/* Smooth content updates */
+.message-content {
+    transition: all 0.1s ease-out;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* CHATGPT-STYLE ICON BUTTONS */
+/* ═══════════════════════════════════════════════════════════ */
+
+/* Input group styling - bubble style */
+.input-group {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 12px;
+    border-radius: 24px;
+    border: 1px solid #e5e7eb;
+    padding: 10px 16px;
+    background: #f9fafb;
+    margin-top: 16px;
+}
+
+.input-group .form-control {
+    border: none;
+    box-shadow: none !important;
+    padding: 0;
+    background: transparent;
+    font-size: 15px;
+    color: #2d333a;
+}
+
+.input-group .form-control::placeholder {
+    color: #9ca3af;
+}
+
+.input-group .form-control:focus {
+    outline: none;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.input-group .form-control:focus-visible {
+    outline: none !important;
+    border: none !important;
+}
+
+/* Remove validation styling */
+.form-control:valid,
+.form-control:invalid,
+.form-control.is-valid,
+.form-control.is-invalid {
+    border: none !important;
+    background-image: none !important;
+    padding-right: 0 !important;
+}
+
+/* Send button - minimal icon only */
+.btn-send-icon,
+.btn-stop-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.btn-send-icon:hover:not(:disabled) {
+    background: #f3f4f6;
+    color: #2d333a;
+}
+
+.btn-send-icon:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.btn-send-icon i,
+.btn-stop-icon i {
+    font-size: 16px;
+}
+
+/* Stop button - red icon */
+.btn-stop-icon {
+    color: #ef4444;
+    background: transparent;
+}
+
+.btn-stop-icon:hover:not(:disabled) {
+    background: #fef2f2;
+    color: #dc2626;
+}
+
+.btn-stop-icon.stopped {
+    color: #10b981;
+    background: #f0fdf4;
+    opacity: 0.7;
+}
+
+/* Disabled state */
+.btn-send-icon:disabled {
+    color: #d1d5db;
+}
+
+/* Cancellation notice styling */
+.message-content em.text-muted {
+    display: block;
+    margin-top: 10px;
+    font-size: 13px;
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* PROGRESS TRACKER */
+/* ═══════════════════════════════════════════════════════════ */
+
+.progress-tracker {
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 8px 0 16px 0;
+    max-height: none;
+    transition: opacity 0.3s ease;
+}
+
+.progress-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 20px;
+}
+
+.progress-step {
+    display: none !important;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    background: transparent;
+    border: none;
+    transition: opacity 0.2s ease;
+}
+
+.progress-step.active {
+    display: flex !important;
+    opacity: 1;
+}
+
+.progress-step.completed {
+    display: none !important;
+}
+
+/* Step status icon - comes first */
+.step-status {
+    flex-shrink: 0;
+    color: #6b7280;
+    font-size: 16px;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    order: 1;
+}
+
+/* Step content - comes second */
+.step-content {
+    flex: 0 0 auto;
+    min-width: 0;
+    order: 2;
+    margin-left: 8px;
+}
+
+.step-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: #2d333a;
+    margin: 0;
+    display: inline;
+    white-space: nowrap;
+}
+
+.step-description {
+    display: none;
+}
+
+.progress-step.completed .step-status {
+    color: #10b981;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .step-title {
+        font-size: 12px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+/* DATA TABLES WITH PROGRESSIVE LOADING */
+/* ═══════════════════════════════════════════════════════════ */
+
+/* Table wrapper */
+.data-table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    margin: 10px 0;
+    border-radius: 10px;
+    background: #fff5eb;
+    border: 1px solid #fed7aa;
+    box-shadow: none;
+}
+
+/* Table styling */
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    color: #4a5568;
+}
+
+/* Table header */
+.data-table thead {
+    background: #ffedd5;
+    color: #78350f;
+}
+
+.data-table thead th {
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    border: none;
+}
+
+.data-table thead th:first-child {
+    border-top-left-radius: 10px;
+}
+
+.data-table thead th:last-child {
+    border-top-right-radius: 10px;
+}
+
+/* Table body */
+.data-table tbody tr {
+    border-bottom: 1px solid #fed7aa;
+    transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+    background-color: #ffedd5;
+}
+
+.data-table tbody td {
+    padding: 8px 12px;
+    color: #4a5568;
+    border: none;
+}
+
+/* Zebra striping for readability */
+.data-table tbody tr:nth-child(even) {
+    background-color: transparent;
+}
+
+.data-table tbody tr:nth-child(even):hover {
+    background-color: #ffedd5;
+}
+
+/* Progressive loading animation */
+.progressive-row {
+    opacity: 0;
+    transform: translateX(-10px);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.progressive-row.loaded {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+/* Responsive table */
+@media (max-width: 768px) {
+    .data-table-wrapper {
+        margin: 8px 0;
+    }
+
+    .data-table {
+        font-size: 12px;
+    }
+
+    .data-table thead th,
+    .data-table tbody td {
+        padding: 6px 10px;
+    }
+
+    .data-table thead th {
+        font-size: 11px;
+    }
+}
+
+/* Numeric column alignment */
+.data-table td:nth-child(n+2) {
+    text-align: right;
+}
+
+.data-table th:nth-child(n+2) {
+    text-align: right;
+}
+
+/* First column (usually labels) stays left-aligned */
+.data-table td:first-child,
+.data-table th:first-child {
+    text-align: left;
+}
+
+/* ============================================
+   PROACTIVE INSIGHTS STYLING
+   ============================================ */
+
+/* Insights message styling - light minimalist orange theme */
+.ai-message.insights-message .message-content {
+    background: #fff5eb;
+    color: #4a5568;
+    border: 1px solid #fed7aa;
+    box-shadow: 0 1px 3px rgba(251, 146, 60, 0.1);
+    line-height: 1.4;
+    padding: 12px 14px;
+}
+
+.ai-message.insights-message .message-content h2 {
+    color: #fd7e14;
+    font-size: 15px;
+    margin-top: 0;
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.ai-message.insights-message .message-content h3 {
+    color: #fd7e14;
+    font-size: 14px;
+    margin-top: 8px;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.ai-message.insights-message .message-content strong {
+    color: #fd7e14;
+    font-weight: 600;
+}
+
+.ai-message.insights-message .message-content p {
+    margin-bottom: 4px;
+    margin-top: 0;
+    color: #4a5568;
+}
+
+.ai-message.insights-message .message-content br {
+    line-height: 0.8;
+}
+
+/* Ensure tables are visible within insights */
+.ai-message.insights-message .data-table-wrapper {
+    margin: 8px 0;
+}
+
+.ai-message.insights-message .data-table {
+    background: #ffffff;
+}
+
+/* Progress tracker for insights generation */
+.progress-tracker {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #ffedd5;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #fed7aa;
+}
+
+/* Loading dots animation */
+.loading-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.loading-dots .dot {
+    width: 6px;
+    height: 6px;
+    background-color: #ea580c;
+    border-radius: 50%;
+    animation: dotPulse 1.4s infinite ease-in-out both;
+}
+
+.loading-dots .dot:nth-child(1) {
+    animation-delay: -0.32s;
+}
+
+.loading-dots .dot:nth-child(2) {
+    animation-delay: -0.16s;
+}
+
+.loading-dots .dot:nth-child(3) {
+    animation-delay: 0s;
+}
+
+@keyframes dotPulse {
+    0%, 80%, 100% {
+        transform: scale(0.6);
+        opacity: 0.5;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.progress-tracker span:last-child {
+    font-size: 13px;
+    color: #78350f;
+    font-weight: 400;
+}
+
+/* Smooth slide-in animation for insights */
+@keyframes slideInFromTop {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.ai-message.insights-message {
+    animation: slideInFromTop 0.3s ease-out;
+}
+
+/* Insights list styling */
+.ai-message.insights-message ul {
+    margin-left: 20px;
+    margin-top: 10px;
+}
+
+.ai-message.insights-message ul li {
+    margin-bottom: 8px;
+    line-height: 1.6;
+}
+
+.ai-message.insights-message ul li::marker {
+    color: #ffd700;
+}
+
+/* Insights title styling */
+.insights-title {
+    color: #fd7e14;
+    font-size: 1.3em;
+    font-weight: 600;
+    margin-top: 0.5em;
+    margin-bottom: 0.8em;
+    border-bottom: 2px solid #fd7e14;
+    padding-bottom: 0.3em;
+}
+
+/* AI message headers styling */
+.ai-message h2, .ai-message h3, .ai-message h4, .ai-message h5 {
+    color: #333;
+    margin-top: 0.8em;
+    margin-bottom: 0.5em;
+}
+
+.ai-message h2 {
+    font-size: 1.3em;
+    font-weight: 600;
+}
+
+.ai-message h3 {
+    font-size: 1.15em;
+    font-weight: 600;
+    color: #fd7e14;
+}
+
+.ai-message h4 {
+    font-size: 1.05em;
+    font-weight: 500;
+}
+
+/* ============================================
+   Suggestion Chips - Follow-up Questions
+   ============================================ */
+
+.suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.suggestion-chip {
+    background: #fff;
+    border: 1px solid #fd7e14;
+    color: #fd7e14;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.suggestion-chip:hover {
+    background: #fd7e14;
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(253, 126, 20, 0.3);
+}
+
+.suggestion-chip:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+/* Animation for chips appearing */
+.suggestion-chips {
+    animation: fadeInUp 0.3s ease-out;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+

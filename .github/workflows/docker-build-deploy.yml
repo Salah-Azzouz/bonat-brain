@@ -1,0 +1,450 @@
+name: Docker Build and GitOps Deploy
+
+on:
+  push:
+    branches: [main, staging, feature/dockerfile]
+  # pull_request:
+  #   branches: [main, staging]
+
+env:
+  ECR_REGISTRY: 107801663763.dkr.ecr.eu-west-3.amazonaws.com
+  ECR_REPOSITORY: brain-backend
+  GITOPS_REPO: Bonat-Org/bonat-k8s
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      environment: ${{ steps.env.outputs.environment }}
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-3
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Set environment variables
+      id: env
+      run: |
+        # Set environment based on branch for tagging and deployment
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          echo "environment=production" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref_name }}" == "feature/dockerfile" ]]; then
+          echo "environment=development" >> $GITHUB_OUTPUT
+        else
+          echo "environment=development" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Extract metadata
+      id: meta
+      run: |
+        ENVIRONMENT=${{ steps.env.outputs.environment }}
+        SHORT_SHA=${GITHUB_SHA::7}
+        
+        # Create tags
+        TAGS="${ECR_REGISTRY}/${ECR_REPOSITORY}:${ENVIRONMENT}"
+        TAGS="${TAGS},$ECR_REGISTRY/${ECR_REPOSITORY}:${ENVIRONMENT}-${SHORT_SHA}"
+        
+        echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+        echo "environment=${ENVIRONMENT}" >> $GITHUB_OUTPUT
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        target: production-distroless
+        push: ${{ github.event_name == 'push' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Build Summary
+      run: |
+        echo "## Build Summary 🚀" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: ${{ steps.env.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Tags**: ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        if [[ "${{ github.event_name }}" == "push" ]]; then
+          echo "- **Action**: Build & Deploy" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Action**: Build Only (PR)" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  update-gitops:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/feature/dockerfile')
+    
+    outputs:
+      updated: ${{ steps.update.outputs.updated }}
+    
+    steps:
+    - name: Checkout GitOps repository
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ env.GITOPS_REPO }}
+        token: ${{ secrets.GH_TOKEN || github.token }}
+        path: gitops
+
+    - name: Update image tag in Kustomization
+      run: |
+        ENVIRONMENT=${{ needs.build.outputs.environment }}
+        SHORT_SHA=${GITHUB_SHA::7}
+        NEW_TAG="${ENVIRONMENT}-${SHORT_SHA}"
+        
+        # Path to the kustomization file
+        KUSTOMIZATION_FILE="gitops/overlays/${ENVIRONMENT}/bonat-brain/kustomization.yaml"
+        
+        if [[ -f "${KUSTOMIZATION_FILE}" ]]; then
+          # Update the image tag using yq (install if not available)
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+          
+          # Update both the image name and tag
+          yq eval ".images[0].name = \"107801663763.dkr.ecr.eu-central-1.amazonaws.com/bonat-brain\"" -i "${KUSTOMIZATION_FILE}"
+          yq eval ".images[0].newName = \"${ECR_REGISTRY}/${ECR_REPOSITORY}\"" -i "${KUSTOMIZATION_FILE}"
+          yq eval ".images[0].newTag = \"${NEW_TAG}\"" -i "${KUSTOMIZATION_FILE}"
+          
+          echo "Updated ${KUSTOMIZATION_FILE} with new image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${NEW_TAG}"
+        else
+          echo "Warning: ${KUSTOMIZATION_FILE} not found"
+          exit 1
+        fi
+
+    - name: Commit and push changes
+      run: |
+        cd gitops
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        ENVIRONMENT=${{ needs.build.outputs.environment }}
+        SHORT_SHA=${GITHUB_SHA::7}
+        
+        git add overlays/${ENVIRONMENT}/bonat-brain/kustomization.yaml
+        
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "Update bonat-brain image tag for ${ENVIRONMENT} to ${SHORT_SHA}
+          
+          Auto-generated by GitHub Actions
+          Source commit: ${GITHUB_SHA}
+          Source repository: ${{ github.repository }}"
+          
+          git push
+          echo "Successfully pushed changes to GitOps repository"
+        fi
+
+  verify-deployment:
+    needs: [build, update-gitops]
+    runs-on: ubuntu-latest
+    if: needs.update-gitops.result == 'success'
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: eu-west-3
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ secrets.AWS_REGION }}
+
+    - name: Force ArgoCD refresh via kubectl
+      run: |
+        ENVIRONMENT=${{ needs.build.outputs.environment }}
+        
+        # Map environment to ArgoCD app name
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          APP_NAME="bonat-brain-prod"
+        elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+          APP_NAME="bonat-brain-staging"
+        elif [[ "${{ github.ref_name }}" == "feature/dockerfile" ]]; then
+          APP_NAME="bonat-brain-dev"
+        else
+          APP_NAME="bonat-brain-dev"
+        fi
+        
+        # Force ArgoCD to refresh the application by patching it
+        echo "Forcing refresh for ArgoCD application: ${APP_NAME}"
+        kubectl patch application ${APP_NAME} -n argocd --type merge -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"normal"}}}'
+        
+        # Also trigger a hard refresh
+        kubectl patch application ${APP_NAME} -n argocd --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
+        kubectl patch application ${APP_NAME} -n argocd --type merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+        
+        echo "Waiting for ArgoCD to detect and sync changes..."
+        sleep 40
+
+    - name: Verify deployment
+      run: |
+        ENVIRONMENT=${{ needs.build.outputs.environment }}
+        EXPECTED_TAG="${ENVIRONMENT}-${GITHUB_SHA::7}"
+        NAMESPACE="bonat-${ENVIRONMENT}"
+        DEPLOYMENT_NAME="${ENVIRONMENT}-bonat-brain"
+        
+        echo "Checking deployment in namespace: ${NAMESPACE}"
+        echo "Expected image tag: ${EXPECTED_TAG}"
+        echo "Found deployment: ${DEPLOYMENT_NAME}"
+        
+        # Wait for rollout with timeout
+        echo "Waiting for deployment rollout..."
+        kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE} --timeout=5m || {
+          echo "Deployment rollout failed or timed out"
+          kubectl describe deployment/${DEPLOYMENT_NAME} -n ${NAMESPACE}
+          exit 1
+        }
+        
+        # Verify the image tag
+        CURRENT_IMAGE=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} -o jsonpath='{.spec.template.spec.containers[0].image}')
+        echo "Current image: ${CURRENT_IMAGE}"
+        
+        if [[ "${CURRENT_IMAGE}" == *"${EXPECTED_TAG}"* ]]; then
+          echo "✅ Deployment successful! Image ${EXPECTED_TAG} is running"
+        else
+          echo "❌ Deployment verification failed. Expected tag ${EXPECTED_TAG} not found in ${CURRENT_IMAGE}"
+          exit 1
+        fi
+        
+        # Check pod status
+        echo "Checking pod health..."
+        READY_PODS=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} -o jsonpath='{.status.readyReplicas}')
+        DESIRED_PODS=$(kubectl get deployment ${DEPLOYMENT_NAME} -n ${NAMESPACE} -o jsonpath='{.spec.replicas}')
+        
+        if [[ "${READY_PODS}" == "${DESIRED_PODS}" ]]; then
+          echo "✅ All ${READY_PODS}/${DESIRED_PODS} pods are ready"
+        else
+          echo "❌ Only ${READY_PODS}/${DESIRED_PODS} pods are ready"
+          kubectl get pods -n ${NAMESPACE} -l "app=bonat-brain"
+          kubectl describe pods -n ${NAMESPACE} -l "app=bonat-brain"
+          exit 1
+        fi
+        
+        # Check if pods are passing readiness probes
+        POD_NAME=$(kubectl get pod -n ${NAMESPACE} -l app=bonat-brain -o jsonpath='{.items[0].metadata.name}')
+        POD_READY=$(kubectl get pod ${POD_NAME} -n ${NAMESPACE} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+        
+        if [[ "${POD_READY}" == "True" ]]; then
+          echo "✅ Pod ${POD_NAME} is ready and passing health checks"
+        else
+          echo "❌ Pod ${POD_NAME} is not ready"
+          kubectl logs -n ${NAMESPACE} ${POD_NAME} --tail=50
+          exit 1
+        fi
+        
+        echo "✅ Deployment verification complete!"
+
+    # - name: Test API health endpoint
+    #   run: |
+    #     ENVIRONMENT=${{ needs.build.outputs.environment }}
+        
+    #     # Set the correct API URL based on environment
+    #     if [[ "${ENVIRONMENT}" == "production" ]]; then
+    #       API_URL="https://brain-api.bonat.io/v1"
+    #     elif [[ "${ENVIRONMENT}" == "staging" ]]; then
+    #       API_URL="https://stg-brain-api.bonat.io/v1"  
+    #     else
+    #       # For development, we might need to port-forward or use internal service
+    #       echo "Skipping health check for development environment"
+    #       exit 0
+    #     fi
+        
+    #     echo "Testing API health endpoint: ${API_URL}/health"
+        
+    #     # Wait a bit for the service to be ready
+    #     sleep 30
+        
+    #     # Test the health endpoint with retries
+    #     for i in {1..5}; do
+    #       if curl -f -s "${API_URL}/health" > /dev/null; then
+    #         echo "✅ API health check passed on attempt ${i}"
+    #         break
+    #       else
+    #         echo "❌ API health check failed on attempt ${i}/5"
+    #         if [[ ${i} -eq 5 ]]; then
+    #           echo "API health check failed after 5 attempts"
+    #           exit 1
+    #         fi
+    #         sleep 10
+    #       fi
+    #     done
+
+
+
+  notify-slack:
+    runs-on: ubuntu-latest
+    needs: [build, update-gitops, verify-deployment]
+    if: always()
+    
+    steps:
+    - name: Determine status
+      id: status  
+      run: |
+        BUILD_RESULT="${{ needs.build.result }}"
+        GITOPS_RESULT="${{ needs.update-gitops.result }}"
+        VERIFY_RESULT="${{ needs.verify-deployment.result }}"
+        
+        echo "Build: ${BUILD_RESULT}, GitOps: ${GITOPS_RESULT}, Verify: ${VERIFY_RESULT}"
+        
+        # If build failed, it's a failure
+        if [[ "${BUILD_RESULT}" == "failure" ]]; then
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "color=danger" >> $GITHUB_OUTPUT
+          echo "emoji=❌" >> $GITHUB_OUTPUT
+        # If build succeeded and this is a push (deployment flow)
+        elif [[ "${BUILD_RESULT}" == "success" && "${{ github.event_name }}" == "push" ]]; then
+          # Check deployment results
+          if [[ "${GITOPS_RESULT}" == "success" && "${VERIFY_RESULT}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "color=good" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+          elif [[ "${GITOPS_RESULT}" == "failure" || "${VERIFY_RESULT}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+          else
+            echo "status=partial" >> $GITHUB_OUTPUT
+            echo "color=warning" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+          fi
+        # If build succeeded but this is a PR (build-only)
+        elif [[ "${BUILD_RESULT}" == "success" && "${{ github.event_name }}" == "pull_request" ]]; then
+          echo "status=build-only" >> $GITHUB_OUTPUT
+          echo "color=good" >> $GITHUB_OUTPUT
+          echo "emoji=🏗️" >> $GITHUB_OUTPUT
+        else
+          echo "status=unknown" >> $GITHUB_OUTPUT
+          echo "color=warning" >> $GITHUB_OUTPUT
+          echo "emoji=❓" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Get environment
+      id: env
+      run: |
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          echo "environment=Production" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+          echo "environment=Staging" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref_name }}" == "feature/dockerfile" ]]; then
+          echo "environment=Development" >> $GITHUB_OUTPUT
+        else
+          echo "environment=Development" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set Slack configuration
+      id: slack-config
+      run: |
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          echo "webhook=${{ secrets.SLACK_WEBHOOK_URL_PRODUCTION }}" >> $GITHUB_OUTPUT
+          echo "channel=#production-deployments" >> $GITHUB_OUTPUT
+          echo "title_prefix=PRODUCTION " >> $GITHUB_OUTPUT
+          echo "alert_prefix=✅ **PRODUCTION DEPLOYMENT** ✅" >> $GITHUB_OUTPUT
+        else
+          echo "webhook=${{ secrets.SLACK_WEBHOOK_URL }}" >> $GITHUB_OUTPUT
+          echo "channel=#deployments" >> $GITHUB_OUTPUT
+          echo "title_prefix=" >> $GITHUB_OUTPUT
+          echo "alert_prefix=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Send Slack notification
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ steps.slack-config.outputs.webhook }}
+        SLACK_CHANNEL: ${{ steps.slack-config.outputs.channel }}
+        SLACK_COLOR: ${{ steps.status.outputs.color }}
+        SLACK_ICON: ${{ steps.status.outputs.emoji }}
+        SLACK_MESSAGE: |
+          ${{ steps.slack-config.outputs.alert_prefix }}
+          *Environment:* ${{ steps.env.outputs.environment }}
+          *Status:* ${{ steps.status.outputs.status }}
+          *Branch:* `${{ github.ref_name }}`
+          *Commit:* `${{ github.sha }}`
+          *Author:* ${{ github.actor }}
+          *Image Tag:* `${{ needs.build.outputs.environment }}-${{ github.sha }}`
+          *Commit Message:* ${{ github.event.head_commit.message }}
+          
+          <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Workflow> | <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|View Commit>
+        SLACK_TITLE: '${{ steps.status.outputs.emoji }} ${{ steps.slack-config.outputs.title_prefix }}Bonat Brain API Deployment'
+        SLACK_USERNAME: 'GitHub Actions'
+
+  notify-slack-failure:
+    runs-on: ubuntu-latest
+    needs: [verify-deployment]
+    if: failure()
+    
+    steps:
+    - name: Get failed job
+      id: failed-job
+      run: |
+        if [[ "${{ needs.build.result }}" == "failure" ]]; then
+          echo "job=Build" >> $GITHUB_OUTPUT
+          echo "step=Docker build and push to ECR" >> $GITHUB_OUTPUT
+        elif [[ "${{ needs.update-gitops.result }}" == "failure" ]]; then
+          echo "job=GitOps Update" >> $GITHUB_OUTPUT
+          echo "step=Updating Kubernetes manifests" >> $GITHUB_OUTPUT
+        elif [[ "${{ needs.verify-deployment.result }}" == "failure" ]]; then
+          echo "job=Deployment Verification" >> $GITHUB_OUTPUT
+          echo "step=Verifying deployment health" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set failure Slack configuration
+      id: failure-slack-config
+      run: |
+        if [[ "${{ github.ref_name }}" == "main" ]]; then
+          echo "webhook=${{ secrets.SLACK_WEBHOOK_URL_PRODUCTION }}" >> $GITHUB_OUTPUT
+          echo "channel=#production-deployments" >> $GITHUB_OUTPUT
+          echo "environment=Production" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+          echo "webhook=${{ secrets.SLACK_WEBHOOK_URL }}" >> $GITHUB_OUTPUT
+          echo "channel=#deployments" >> $GITHUB_OUTPUT
+          echo "environment=Staging" >> $GITHUB_OUTPUT
+        else
+          echo "webhook=${{ secrets.SLACK_WEBHOOK_URL }}" >> $GITHUB_OUTPUT
+          echo "channel=#deployments" >> $GITHUB_OUTPUT
+          echo "environment=Development" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Send failure notification
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ steps.failure-slack-config.outputs.webhook }}
+        SLACK_CHANNEL: ${{ steps.failure-slack-config.outputs.channel }}
+        SLACK_COLOR: 'danger'
+        SLACK_ICON: '🚨'
+        SLACK_MESSAGE: |
+          *Environment:* ${{ steps.failure-slack-config.outputs.environment }}
+          *Failed Job:* ${{ steps.failed-job.outputs.job }}
+          *Failed Step:* ${{ steps.failed-job.outputs.step }}
+          *Branch:* `${{ github.ref_name }}`
+          *Author:* ${{ github.actor }}
+          
+          *Action Required:* Please check the workflow logs and fix the issue.
+          
+          <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Failed Workflow>
+        SLACK_TITLE: '🚨 Deployment Failed - Bonat Brain API'
+        SLACK_USERNAME: 'GitHub Actions'

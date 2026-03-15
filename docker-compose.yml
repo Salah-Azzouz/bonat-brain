@@ -1,0 +1,63 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - TZ=Asia/Riyadh
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+
+      # Database connections (AWS RDS)
+      - DB_DATABASE=${DB_DATABASE}
+      - DB_HOST=${DB_HOST}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - REPLICA_DB_HOST=${REPLICA_DB_HOST}
+
+      # MongoDB connections (local container)
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - MONGO_HOST=mongodb
+      - MONGO_PASSWORD=${MONGO_PASSWORD}
+      - MONGO_PORT=27017
+      - MONGO_USER=${MONGO_USER}
+
+      # External API configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+      # Authentication
+      - SECRET_KEY=${SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+      # Qdrant Vector Database
+      - QDRANT_HOST=${QDRANT_HOST}
+      - QDRANT_PORT=${QDRANT_PORT}
+      - QDRANT__SERVICE__API_KEY=${QDRANT__SERVICE__API_KEY}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      - mongodb
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+
+  mongodb:
+    image: mongo:latest
+    logging:
+      driver: "none"
+    # No authentication for local development (simpler setup)
+    # For production, add MONGO_INITDB_ROOT_USERNAME/PASSWORD
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:
